@@ -237,18 +237,16 @@
     <div id="tab-replay" class="tab-content hidden">
       <div class="card">
         <h2>▶️ 再生モード</h2>
-        <div class="form-row">
-          <div class="form-group">
-            <label>セッション</label>
-            <select id="replaySessionSelect">
-              <option value="">-- 選択 --</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>テストケース</label>
-            <select id="replayCaseSelect">
-              <option value="">-- 全ケース実行 --</option>
-            </select>
+        <div class="form-group">
+          <label>セッション</label>
+          <select id="replaySessionSelect" onchange="loadReplayCases()">
+            <option value="">-- 選択 --</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>実行するテストケース</label>
+          <div id="replayCaseList" style="margin-top: 4px;">
+            <div style="color: var(--text2); font-size: 13px;">セッションを選択してください</div>
           </div>
         </div>
         <div class="btn-group">
@@ -878,6 +876,69 @@ async function importExcel(input) {
 }
 
 // ===== Replay =====
+let replayTestCases = [];  // 再生タブ用のテストケース一覧
+
+async function loadReplayCases() {
+  const sessionName = document.getElementById('replaySessionSelect').value;
+  const caseListEl = document.getElementById('replayCaseList');
+  
+  if (!sessionName) {
+    caseListEl.innerHTML = '<div style="color: var(--text2); font-size: 13px;">セッションを選択してください</div>';
+    replayTestCases = [];
+    return;
+  }
+  
+  // テストケースを読み込み
+  try {
+    const caseRes = await fetch('/api/testcases');
+    const allCases = await caseRes.json();
+    const matchCase = allCases.find(c => c.sessionName === sessionName);
+    replayTestCases = matchCase?.cases || [];
+  } catch { replayTestCases = []; }
+  
+  if (replayTestCases.length === 0) {
+    caseListEl.innerHTML = '<div style="color: var(--warning); font-size: 13px;">⚠️ テストケースがありません。先にテストケースタブで作成してください。</div>';
+    return;
+  }
+  
+  // チェックボックスリストを生成
+  let html = '<div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px;">';
+  html += `<label style="display: flex; align-items: center; gap: 8px; padding: 4px 8px; margin-bottom: 4px; background: var(--surface2); border-radius: 4px; cursor: pointer;">
+    <input type="checkbox" id="selectAllCases" onchange="toggleAllCases(this.checked)"> 
+    <strong>全て選択 (${replayTestCases.length}件)</strong>
+  </label>`;
+  html += '<hr style="border: none; border-top: 1px solid var(--border); margin: 8px 0;">';
+  
+  replayTestCases.forEach((tc, i) => {
+    const enabledStyle = tc.enabled ? '' : 'opacity: 0.5;';
+    html += `<label style="display: flex; align-items: center; gap: 8px; padding: 4px 8px; cursor: pointer; ${enabledStyle}">
+      <input type="checkbox" class="case-checkbox" value="${escAttr(tc.caseId)}" ${tc.enabled ? 'checked' : ''}>
+      <span>${escHtml(tc.caseId)}</span>
+      <span style="color: var(--text2); font-size: 12px;">${escHtml(tc.caseName || '')}</span>
+      ${!tc.enabled ? '<span style="color: var(--warning); font-size: 11px;">(無効)</span>' : ''}
+    </label>`;
+  });
+  html += '</div>';
+  caseListEl.innerHTML = html;
+  
+  // 全選択チェックボックスの状態を更新
+  updateSelectAllState();
+}
+
+function toggleAllCases(checked) {
+  document.querySelectorAll('.case-checkbox').forEach(cb => cb.checked = checked);
+}
+
+function updateSelectAllState() {
+  const checkboxes = document.querySelectorAll('.case-checkbox');
+  const checkedCount = document.querySelectorAll('.case-checkbox:checked').length;
+  const selectAll = document.getElementById('selectAllCases');
+  if (selectAll) {
+    selectAll.checked = checkedCount === checkboxes.length;
+    selectAll.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+  }
+}
+
 async function startReplay() {
   const sessionName = document.getElementById('replaySessionSelect').value;
   if (!sessionName) {
@@ -885,12 +946,23 @@ async function startReplay() {
     return;
   }
   
+  // 選択されたケースIDを取得
+  const selectedCases = Array.from(document.querySelectorAll('.case-checkbox:checked'))
+    .map(cb => cb.value);
+  
+  if (selectedCases.length === 0) {
+    alert('実行するテストケースを選択してください');
+    return;
+  }
+  
   document.getElementById('replayProgress').style.display = '';
   document.getElementById('replayResults').innerHTML = '';
   
+  addLog('info', `▶️ 再生開始: ${selectedCases.length}件のケースを実行`);
+  
   sendWS({
     type: 'replay:start',
-    payload: { sessionId: sessionName, caseIds: [] },
+    payload: { sessionId: sessionName, caseIds: selectedCases },
   });
 }
 

@@ -116,6 +116,15 @@ export class BrowserManager {
 
     try {
       await this.page.waitForLoadState('domcontentloaded');
+      
+      // 動的フィールド対応: ページ読み込み後、追加の待機
+      // JSフレームワーク（React/Vue等）のレンダリング完了を待つ
+      await new Promise(r => setTimeout(r, 1000));
+      
+      // networkidleも待つ（APIリクエスト完了待ち）
+      await this.page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+      
+      // さらに少し待って、遅延レンダリングに対応
       await new Promise(r => setTimeout(r, 500));
 
       const url = this.page.url();
@@ -134,7 +143,19 @@ export class BrowserManager {
         });
       } catch { /* 既に注入済みの場合は無視 */ }
 
-      const fields = await collectPageFields(this.page);
+      // 最初の収集
+      let fields = await collectPageFields(this.page);
+      
+      // フィールドが少ない場合、追加待機して再収集（動的フィールド対応）
+      if (fields.length < 3) {
+        await new Promise(r => setTimeout(r, 1500));
+        const retryFields = await collectPageFields(this.page);
+        if (retryFields.length > fields.length) {
+          this.log('info', `🔄 追加フィールドを検出: ${fields.length} → ${retryFields.length}`);
+          fields = retryFields;
+        }
+      }
+      
       if (fields.length === 0) return;
 
       this.stepCounter++;
@@ -333,35 +354,52 @@ export class BrowserManager {
           if (!submitSelector) {
             this.log('info', `[${testCase.caseId}] 🔍 送信ボタンを自動検出中...`);
             const autoDetected = await page.evaluate(() => {
-              // 優先度順に検索
+              // 優先度順に検索（セレクタパターン）
               const patterns = [
                 'button[type="submit"]:not([disabled])',
                 'input[type="submit"]:not([disabled])',
+                'a[href^="javascript:"]:not([disabled])',  // javascript: リンク追加
+                'a.nextBtn:not([disabled])',
+                'a.nextBtn2:not([disabled])',
                 'button.btn-primary:not([disabled])',
                 'button.submit:not([disabled])',
                 'a.btn-primary:not([disabled])',
+                'a.btn-submit:not([disabled])',
+                '.btn-start:not([disabled])',
+                '.submit-btn:not([disabled])',
               ];
-              const textPatterns = ['次へ', '進む', '確認', '送信', '完了', '登録', '保存', 'next', 'submit', 'confirm'];
+              // テキストパターン（日本語保険サイト対応を強化）
+              const textPatterns = [
+                '次へ', '進む', '確認', '送信', '完了', '登録', '保存',
+                'スタート', '診断', '開始', '申込', '見積',
+                'next', 'submit', 'confirm', 'start'
+              ];
 
               for (const pattern of patterns) {
                 const el = document.querySelector(pattern) as HTMLElement | null;
                 if (el && el.offsetParent !== null) {
                   const id = el.id ? `#${el.id}` : null;
+                  const className = el.className ? `.${el.className.split(' ')[0]}` : null;
                   const name = el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : null;
-                  return id || name || pattern;
+                  return id || className || name || pattern;
                 }
               }
 
-              // テキストマッチで検索
-              const allButtons = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn')) as HTMLElement[];
-              for (const btn of allButtons) {
+              // テキストマッチで検索（button, a, input, div等を広く検索）
+              const allClickables = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')) as HTMLElement[];
+              for (const btn of allClickables) {
                 if (btn.offsetParent === null) continue; // 非表示はスキップ
                 const text = btn.textContent?.trim().toLowerCase() || '';
+                const value = (btn as HTMLInputElement).value?.toLowerCase() || '';
+                const combined = text + ' ' + value;
                 for (const keyword of textPatterns) {
-                  if (text.includes(keyword.toLowerCase())) {
+                  if (combined.includes(keyword.toLowerCase())) {
                     const id = btn.id ? `#${btn.id}` : null;
+                    const className = btn.className ? `.${btn.className.split(' ')[0]}` : null;
                     const name = btn.getAttribute('name') ? `[name="${btn.getAttribute('name')}"]` : null;
-                    return id || name || `button:has-text("${btn.textContent?.trim().substring(0, 15)}")`;
+                    const tagName = btn.tagName.toLowerCase();
+                    const textContent = btn.textContent?.trim().substring(0, 20) || value;
+                    return id || className || name || `${tagName}:has-text("${textContent}")`;
                   }
                 }
               }
@@ -383,30 +421,116 @@ export class BrowserManager {
               // ボタンが表示されるまで待機（最大5秒）
               await btn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
 
-              // disabled 属性が外れるまで最大8秒待機（全フィールド入力後に活性化するボタン対応）
-              const enabledResult = await page.waitForFunction(
-                (sel: string) => {
-                  const el = document.querySelector(sel) as HTMLButtonElement | null;
-                  if (!el) return false;
-                  return !el.disabled && el.getAttribute('disabled') === null && !el.classList.contains('disabled');
-                },
-                submitSelector,
-                { timeout: 8000 }
-              ).catch(() => null);
+              // disabled 属性が外れるまで待機（Playwright locator で判定）
+              let isEnabled = false;
+              for (let attempt = 0; attempt < 16; attempt++) {  // 最大8秒 (500ms x 16)
+                try {
+                  isEnabled = await btn.isEnabled();
+                  if (isEnabled) break;
+                } catch { /* ページ遷移中は無視 */ }
+                await page.waitForTimeout(500);
+              }
 
-              if (!enabledResult) {
-                this.log('warn', `[${testCase.caseId}] ⚠️ ボタンが有効化されませんでした (force クリックで試みます): ${submitSelector}`);
+              if (!isEnabled) {
+                this.log('warn', `[${testCase.caseId}] ⚠️ ボタンが有効化されませんでした (クリックを試みます): ${submitSelector}`);
               } else {
                 this.log('info', `[${testCase.caseId}] ✅ ボタン活性化を確認`);
               }
 
+              // クリック前のURL/コンテンツを記録
+              const urlBefore = page.url();
+              const contentHashBefore = await page.evaluate(() => {
+                const main = document.querySelector('main, #main, .main, [role="main"], form, body');
+                return main ? main.innerHTML.length : 0;
+              }).catch(() => 0);
+
               // 少し待ってからクリック（JSアニメーション等の完了待ち）
               await page.waitForTimeout(300);
-              this.log('info', `[${testCase.caseId}] 送信クリック: ${submitSelector}`);
-              await btn.click({ force: true });
+              this.log('info', `[${testCase.caseId}] 🖱️ 送信クリック: ${submitSelector}`);
+              
+              // クリック方法を複数試行
+              let clickSuccess = false;
+              
+              // href="javascript:..." の場合は特別処理
+              const hrefJs = await btn.evaluate((el: HTMLElement) => {
+                const href = el.getAttribute('href') || '';
+                if (href.startsWith('javascript:')) {
+                  return href.replace('javascript:', '');
+                }
+                return null;
+              });
+              
+              if (hrefJs) {
+                // javascript: リンクの場合、JSコードを直接実行
+                this.log('info', `[${testCase.caseId}] 🔗 javascript: リンクを検出 → JS直接実行`);
+                try {
+                  await page.evaluate((code: string) => {
+                    // グローバルスコープで実行
+                    eval(code);
+                  }, hrefJs);
+                  clickSuccess = true;
+                } catch (e: any) {
+                  this.log('warn', `[${testCase.caseId}] JS直接実行失敗: ${e.message}, 通常クリックを試行`);
+                }
+              }
+              
+              if (!clickSuccess) {
+                // 1. 通常クリック
+                try {
+                  await btn.click({ timeout: 3000 });
+                  clickSuccess = true;
+                } catch (e1: any) {
+                  this.log('warn', `[${testCase.caseId}] 通常クリック失敗: ${e1.message}, force クリックを試行`);
+                  
+                  // 2. force クリック
+                  try {
+                    await btn.click({ force: true, timeout: 3000 });
+                    clickSuccess = true;
+                  } catch (e2: any) {
+                    this.log('warn', `[${testCase.caseId}] force クリック失敗: ${e2.message}, JS クリックを試行`);
+                    
+                    // 3. JavaScript で直接クリック
+                    try {
+                      await btn.evaluate((el: HTMLElement) => {
+                        el.click();
+                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                      });
+                      clickSuccess = true;
+                    } catch (e3: any) {
+                      this.log('error', `[${testCase.caseId}] ❌ 全てのクリック方法が失敗: ${e3.message}`);
+                    }
+                  }
+                }
+              }
 
-              await page.waitForLoadState('domcontentloaded', { timeout: this.settings.timeout.navigation });
-              await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+              if (clickSuccess) {
+                // 遷移を待機
+                await page.waitForLoadState('domcontentloaded', { timeout: this.settings.timeout.navigation }).catch(() => {});
+                await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+                await page.waitForTimeout(500);
+                
+                // 遷移を検証
+                const urlAfter = page.url();
+                const contentHashAfter = await page.evaluate(() => {
+                  const main = document.querySelector('main, #main, .main, [role="main"], form, body');
+                  return main ? main.innerHTML.length : 0;
+                }).catch(() => 0);
+                
+                const urlChanged = urlAfter !== urlBefore;
+                const contentChanged = Math.abs(contentHashAfter - contentHashBefore) > 100;
+                
+                if (urlChanged) {
+                  this.log('info', `[${testCase.caseId}] ✅ ページ遷移を確認: ${urlBefore} → ${urlAfter}`);
+                } else if (contentChanged) {
+                  this.log('info', `[${testCase.caseId}] ✅ ページ内容の変化を確認 (SPA遷移)`);
+                } else {
+                  this.log('warn', `[${testCase.caseId}] ⚠️ ページ遷移が検出されませんでした（入力不足の可能性）`);
+                  // スクリーンショットを追加保存
+                  const stuckPath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_stuck.png`);
+                  await page.screenshot({ path: stuckPath, fullPage: this.settings.screenshot.fullPage });
+                  screenshots.push(stuckPath);
+                }
+              }
             } catch (err: any) {
               this.log('warn', `[${testCase.caseId}] 遷移エラー: ${err.message}`);
             }
