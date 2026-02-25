@@ -327,7 +327,55 @@ export class BrowserManager {
           screenshots.push(afterPath);
 
           // 送信ボタンクリック → 次画面へ遷移
-          const submitSelector = pageInput.submitSelector || sessionPage?.submitSelector;
+          let submitSelector = pageInput.submitSelector || sessionPage?.submitSelector;
+
+          // submitSelector が空の場合、自動検出を試みる
+          if (!submitSelector) {
+            this.log('info', `[${testCase.caseId}] 🔍 送信ボタンを自動検出中...`);
+            const autoDetected = await page.evaluate(() => {
+              // 優先度順に検索
+              const patterns = [
+                'button[type="submit"]:not([disabled])',
+                'input[type="submit"]:not([disabled])',
+                'button.btn-primary:not([disabled])',
+                'button.submit:not([disabled])',
+                'a.btn-primary:not([disabled])',
+              ];
+              const textPatterns = ['次へ', '進む', '確認', '送信', '完了', '登録', '保存', 'next', 'submit', 'confirm'];
+
+              for (const pattern of patterns) {
+                const el = document.querySelector(pattern) as HTMLElement | null;
+                if (el && el.offsetParent !== null) {
+                  const id = el.id ? `#${el.id}` : null;
+                  const name = el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : null;
+                  return id || name || pattern;
+                }
+              }
+
+              // テキストマッチで検索
+              const allButtons = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn')) as HTMLElement[];
+              for (const btn of allButtons) {
+                if (btn.offsetParent === null) continue; // 非表示はスキップ
+                const text = btn.textContent?.trim().toLowerCase() || '';
+                for (const keyword of textPatterns) {
+                  if (text.includes(keyword.toLowerCase())) {
+                    const id = btn.id ? `#${btn.id}` : null;
+                    const name = btn.getAttribute('name') ? `[name="${btn.getAttribute('name')}"]` : null;
+                    return id || name || `button:has-text("${btn.textContent?.trim().substring(0, 15)}")`;
+                  }
+                }
+              }
+              return null;
+            });
+
+            if (autoDetected) {
+              this.log('info', `[${testCase.caseId}] 🎯 自動検出: ${autoDetected}`);
+              submitSelector = autoDetected;
+            } else {
+              this.log('warn', `[${testCase.caseId}] ⚠️ 送信ボタンが見つかりません`);
+            }
+          }
+
           if (submitSelector) {
             try {
               const btn = page.locator(submitSelector).first();
