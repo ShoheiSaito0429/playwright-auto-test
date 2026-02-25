@@ -161,6 +161,7 @@
     <div class="tab" data-tab="cases" onclick="switchTab('cases')">📋 テストケース</div>
     <div class="tab" data-tab="replay" onclick="switchTab('replay')">▶️ 再生</div>
     <div class="tab" data-tab="settings" onclick="switchTab('settings')">⚙️ 設定</div>
+    <div class="tab" data-tab="logs" onclick="switchTab('logs'); loadLogFile()">🗒️ ログ</div>
   </div>
   
   <!-- Main Content -->
@@ -308,7 +309,27 @@
         <button class="btn btn-primary" onclick="saveSettings()">💾 設定を保存</button>
       </div>
     </div>
-    
+
+    <!-- ===== ログタブ ===== -->
+    <div id="tab-logs" class="tab-content hidden">
+      <div class="card">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+          <h2 style="margin:0;">🗒️ 実行ログ</h2>
+          <select id="logFileSelect" onchange="loadLogFile()" style="flex:1; max-width:200px;"></select>
+          <button class="btn btn-outline btn-sm" onclick="loadLogFile()">🔄 更新</button>
+          <button class="btn btn-outline btn-sm" onclick="downloadLog()">📥 ダウンロード</button>
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="autoRefreshLog" onchange="toggleAutoRefresh(this.checked)"> 自動更新(5s)
+          </label>
+        </div>
+        <pre id="logContent" style="
+          background: #0d1117; color: #e6edf3; padding: 16px; border-radius: 8px;
+          font-size: 12px; line-height: 1.6; max-height: 65vh; overflow-y: auto;
+          white-space: pre-wrap; word-break: break-all; font-family: monospace;
+        ">ログを読み込んでいます...</pre>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -989,6 +1010,53 @@ window.addEventListener('load', () => {
   connectWS();
   loadSettings();
 });
+
+// ===== Log Viewer =====
+let logAutoRefreshTimer = null;
+
+async function loadLogFile() {
+  // ファイル一覧を取得
+  const listRes = await fetch('/api/logs').catch(() => null);
+  if (!listRes || !listRes.ok) {
+    document.getElementById('logContent').textContent = 'ログファイルが見つかりません';
+    return;
+  }
+  const files = await listRes.json();
+  const select = document.getElementById('logFileSelect');
+  const current = select.value;
+  select.innerHTML = files.map(f => `<option value="${f}" ${f === current ? 'selected' : ''}>${f}</option>`).join('');
+  if (!select.value && files.length > 0) select.value = files[0];
+
+  const filename = select.value;
+  if (!filename) { document.getElementById('logContent').textContent = 'ログファイルなし'; return; }
+
+  const res = await fetch(`/api/logs/${filename}`).catch(() => null);
+  if (!res || !res.ok) { document.getElementById('logContent').textContent = 'ロード失敗'; return; }
+  const text = await res.text();
+  const el = document.getElementById('logContent');
+
+  // 色付け: ERROR=赤, WARN=黄, INFO=通常
+  el.innerHTML = text.split('\n').map(line => {
+    if (line.includes('[ERROR]')) return `<span style="color:#f85149">${escHtml(line)}</span>`;
+    if (line.includes('[WARN]')) return `<span style="color:#d29922">${escHtml(line)}</span>`;
+    if (line.includes('[DEBUG]')) return `<span style="color:#7d8590">${escHtml(line)}</span>`;
+    if (line.includes('✅')) return `<span style="color:#3fb950">${escHtml(line)}</span>`;
+    return escHtml(line);
+  }).join('\n');
+
+  // 末尾にスクロール
+  el.scrollTop = el.scrollHeight;
+}
+
+function downloadLog() {
+  const filename = document.getElementById('logFileSelect').value;
+  if (filename) window.open(`/api/logs/${filename}`, '_blank');
+}
+
+function toggleAutoRefresh(enabled) {
+  clearInterval(logAutoRefreshTimer);
+  if (enabled) logAutoRefreshTimer = setInterval(loadLogFile, 5000);
+}
 </script>
 </body>
 </html>

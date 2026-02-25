@@ -283,12 +283,17 @@ export class BrowserManager {
 
           // 入力
           const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
+          this.log('info', `[${testCase.caseId}] ステップ${pageInput.stepNumber}: ${fieldsToFill.length}個のフィールドを入力 (URL: ${page.url()})`);
           for (const field of fieldsToFill) {
+            const displayValue = field.type === 'password' ? '****' : field.value;
+            appendLog('debug', `[${testCase.caseId}] 入力試行: [${field.type}] selector="${field.selector}" value="${displayValue}"`);
             try {
               await inputHandler.fillField(page, field);
-              this.log('info', `[${testCase.caseId}] 入力: [${field.type}] ${field.label || field.selector} = "${field.type === 'password' ? '****' : field.value}"`);
+              appendLog('debug', `[${testCase.caseId}] 入力成功: [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
+              this.log('info', `[${testCase.caseId}] ✅ 入力: [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
             } catch (err: any) {
-              this.log('warn', `[${testCase.caseId}] 入力エラー [${field.selector}]: ${err.message}`);
+              this.log('warn', `[${testCase.caseId}] ❌ 入力エラー [${field.type}] selector="${field.selector}": ${err.message}`);
+              appendLog('debug', `[${testCase.caseId}] エラー詳細: ${err.stack || err.message}`);
             }
           }
 
