@@ -715,7 +715,7 @@ function renderCaseTable() {
       const pageInput = tc.pageInputs.find(pi => pi.stepNumber === fr.stepNumber);
       const fieldValue = pageInput?.fieldValues.find(fv => fv.fieldId === fr.fieldId || fv.selector === fr.selector);
       const val = fieldValue?.value || '';
-      const onChange = `updateCaseFieldValue(${ci}, ${fr.stepNumber}, '${fr.fieldId}', '${escAttr(fr.selector)}', this.value)`;
+      const onChange = `updateCaseFieldValue(${ci}, ${fr.stepNumber}, '${fr.fieldId}', '${escAttr(fr.selector)}', this.value, '${fr.type}')`;
 
       if (fr.type === 'radio' && fr.options && fr.options.length > 0) {
         // ラジオボタン → ドロップダウン選択（ラベルとvalue両方表示）
@@ -748,7 +748,7 @@ function renderCaseTable() {
         html += `<td style="text-align:center;">
           <label style="cursor:pointer; user-select:none; display:flex; align-items:center; gap:4px; justify-content:center;">
             <input type="checkbox" ${checked ? 'checked' : ''} 
-              onchange="updateCaseFieldValue(${ci}, ${fr.stepNumber}, '${fr.fieldId}', '${escAttr(fr.selector)}', this.checked ? 'true' : 'false'); this.nextElementSibling.textContent = this.checked ? 'ON' : 'OFF';">
+              onchange="updateCaseFieldValue(${ci}, ${fr.stepNumber}, '${fr.fieldId}', '${escAttr(fr.selector)}', this.checked ? 'true' : 'false', 'checkbox'); this.nextElementSibling.textContent = this.checked ? 'ON' : 'OFF';">
             <span style="font-size:11px; color:var(--text2);">${checked ? 'ON' : 'OFF'}</span>
           </label>
         </td>`;
@@ -770,7 +770,7 @@ function renderCaseTable() {
   document.getElementById('caseTable').innerHTML = html;
 }
 
-function updateCaseFieldValue(caseIndex, stepNumber, fieldId, selector, value) {
+function updateCaseFieldValue(caseIndex, stepNumber, fieldId, selector, value, type = 'text') {
   const tc = testCases[caseIndex];
   let pageInput = tc.pageInputs.find(pi => pi.stepNumber === stepNumber);
   if (!pageInput) {
@@ -780,8 +780,9 @@ function updateCaseFieldValue(caseIndex, stepNumber, fieldId, selector, value) {
   let fv = pageInput.fieldValues.find(f => f.fieldId === fieldId || f.selector === selector);
   if (fv) {
     fv.value = value;
+    fv.type = type; // typeも更新（既存レコードも正しいtypeに修正）
   } else {
-    pageInput.fieldValues.push({ fieldId, selector, type: 'text', label: '', value });
+    pageInput.fieldValues.push({ fieldId, selector, type, label: '', value });
   }
 }
 
