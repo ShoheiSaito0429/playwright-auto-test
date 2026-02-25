@@ -191,6 +191,90 @@ app.post('/api/testcases/:name/export', (req, res) => {
   res.json({ ok: true, path: filePath });
 });
 
+// === API: インポート（Excel → テストケース） ===
+app.post('/api/import', express.raw({ type: 'application/octet-stream', limit: '10mb' }), (req, res) => {
+  try {
+    const wb = XLSX.read(req.body, { type: 'buffer' });
+
+    const ws1 = wb.Sheets['テストケース'];
+    const ws2 = wb.Sheets['フィールド定義'];
+    const ws3 = wb.Sheets['ページ遷移'];
+
+    if (!ws1 || !ws2) {
+      return res.status(400).json({ error: 'シート「テストケース」「フィールド定義」が見つかりません' });
+    }
+
+    const rows = XLSX.utils.sheet_to_json(ws1, { header: 1, defval: '' }) as string[][];
+    const fieldDefs = (XLSX.utils.sheet_to_json(ws2, { header: 1, defval: '' }) as string[][]).slice(1);
+    const navRows = ws3 ? (XLSX.utils.sheet_to_json(ws3, { header: 1, defval: '' }) as string[][]).slice(1) : [];
+
+    // ケースID / ケース名を取得
+    const caseIds: string[] = (rows[0] || []).slice(1).map(String).filter(Boolean);
+    const caseNames: string[] = (rows[1] || []).slice(1).map(String);
+
+    if (caseIds.length === 0) return res.status(400).json({ error: 'ケースIDが見つかりません' });
+
+    const cases = caseIds.map((id, i) => ({
+      caseId: id,
+      caseName: caseNames[i] || id,
+      pageInputs: [] as any[],
+      enabled: true,
+    }));
+
+    let fieldIndex = 0;
+    let currentStep = 1;
+
+    for (let ri = 3; ri < rows.length; ri++) {
+      const row = rows[ri];
+      if (!row || row.every(c => c === '')) continue;
+
+      const firstCell = String(row[0] || '');
+      const pageMatch = firstCell.match(/画面(\d+)/);
+      if (pageMatch) { currentStep = parseInt(pageMatch[1]); continue; }
+
+      const meta = fieldDefs[fieldIndex++];
+      if (!meta) continue;
+
+      const stepNumber = parseInt(String(meta[0])) || currentStep;
+      const fieldType = String(meta[1] || 'text');
+      const fieldSelector = String(meta[3] || '');
+      const fieldLabel = String(meta[4] || '');
+
+      cases.forEach((tc, ci) => {
+        const value = String(row[ci + 1] ?? '');
+        if (value === '') return;
+
+        let pi = tc.pageInputs.find((p: any) => p.stepNumber === stepNumber);
+        if (!pi) {
+          pi = { stepNumber, pageId: '', fieldValues: [], submitSelector: '' };
+          tc.pageInputs.push(pi);
+        }
+        pi.fieldValues.push({
+          fieldId: `${stepNumber}_${fieldSelector}`,
+          selector: fieldSelector,
+          type: fieldType,
+          label: fieldLabel,
+          value,
+        });
+      });
+    }
+
+    // submitSelector を設定
+    navRows.forEach(navRow => {
+      const step = parseInt(String(navRow[0]));
+      const submitSel = String(navRow[3] || '');
+      cases.forEach(tc => {
+        const pi = tc.pageInputs.find((p: any) => p.stepNumber === step);
+        if (pi && submitSel) pi.submitSelector = submitSel;
+      });
+    });
+
+    res.json({ ok: true, cases });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // === API: 実行結果 ===
 app.get('/api/results', (_req, res) => {
   const dir = path.resolve('data/screenshots');

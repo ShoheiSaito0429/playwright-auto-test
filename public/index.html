@@ -223,6 +223,8 @@
               <button class="btn btn-primary btn-sm" onclick="addTestCase()">＋ ケース追加</button>
               <button class="btn btn-success btn-sm" onclick="saveTestCases()">💾 保存</button>
               <button class="btn btn-outline btn-sm" onclick="exportExcel()">📥 Excel出力</button>
+              <button class="btn btn-outline btn-sm" onclick="document.getElementById('importFileInput').click()">📤 Excel取込</button>
+              <input type="file" id="importFileInput" accept=".xlsx" style="display:none" onchange="importExcel(this)">
             </div>
           </div>
           <div class="table-wrap" id="caseTable"></div>
@@ -818,6 +820,39 @@ async function exportExcel() {
   if (result.ok) {
     addLog('info', `✅ Excel出力: ${result.path}`);
     alert(`Excelファイルを出力しました:\n${result.path}`);
+  }
+}
+
+async function importExcel(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = ''; // リセット（同じファイルを再選択できるように）
+
+  addLog('info', `📤 インポート中: ${file.name}`);
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const res = await fetch('/api/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: buffer,
+    });
+    const result = await res.json();
+
+    if (!res.ok || result.error) {
+      addLog('error', `❌ インポートエラー: ${result.error}`);
+      alert(`インポートエラー:\n${result.error}`);
+      return;
+    }
+
+    // テストケースを置き換え
+    testCases = result.cases;
+    renderCaseTable();
+    addLog('info', `✅ インポート完了: ${result.cases.length}件のテストケースを読み込みました`);
+    alert(`インポート完了！\n${result.cases.length}件のテストケースを読み込みました。\n\n「保存」ボタンで保存してください。`);
+  } catch (e) {
+    addLog('error', `❌ インポート失敗: ${e.message}`);
+    alert(`インポートに失敗しました:\n${e.message}`);
   }
 }
 
