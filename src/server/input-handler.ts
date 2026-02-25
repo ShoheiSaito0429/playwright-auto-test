@@ -30,11 +30,26 @@ export class InputHandler {
     }
   }
 
-  private async fillText(page: Page, selector: string, value: string): Promise<void> {
-    const el = page.locator(selector).first();
+  /**
+   * 動的にレンダリングされる要素対応：
+   * count() === 0 の場合は最大 timeoutMs ms ポーリングして現れるのを待つ。
+   * 画面遷移後に JS で追加される select/checkbox/radio などに効果的。
+   */
+  private async waitForCount(page: Page, selector: string, timeoutMs = 3000): Promise<number> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const count = await page.locator(selector).count();
+      if (count > 0) return count;
+      await page.waitForTimeout(250);
+    }
+    return 0;
+  }
 
-    const count = await el.count();
+  private async fillText(page: Page, selector: string, value: string): Promise<void> {
+    const count = await this.waitForCount(page, selector);
     if (count === 0) throw new Error(`element not found: ${selector}`);
+
+    const el = page.locator(selector).first();
 
     // JS直接操作（クリック不要 → ポップアップ開かない）
     const ok = await page.evaluate(({ sel, val }) => {
@@ -59,6 +74,10 @@ export class InputHandler {
   }
 
   private async selectRadio(page: Page, selector: string, value: string): Promise<void> {
+    // 要素が現れるまで最大3秒待つ（動的レンダリング対応）
+    const count = await this.waitForCount(page, selector);
+    if (count === 0) throw new Error(`radio not found: ${selector}`);
+
     const specificSelector = `${selector}[value="${value}"]`;
 
     // --- JS経由で確実に選択（カスタムUIサイト対応） ---
@@ -114,9 +133,11 @@ export class InputHandler {
   }
 
   private async selectOption(page: Page, selector: string, value: string): Promise<void> {
-    const el = page.locator(selector).first();
-    const count = await el.count();
+    // 動的レンダリング対応: 要素が現れるまで最大3秒待つ
+    const count = await this.waitForCount(page, selector);
     if (count === 0) throw new Error(`element not found: ${selector}`);
+
+    const el = page.locator(selector).first();
     await el.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
 
     // 1. value属性で選択
@@ -142,8 +163,11 @@ export class InputHandler {
   }
 
   private async setCheckbox(page: Page, selector: string, checked: boolean): Promise<void> {
+    // 動的レンダリング対応: 要素が現れるまで最大3秒待つ
+    const count = await this.waitForCount(page, selector);
+    if (count === 0) throw new Error(`element not found: ${selector}`);
+
     const el = page.locator(selector).first();
-    if (await el.count() === 0) throw new Error(`element not found: ${selector}`);
     try {
       await el.waitFor({ state: 'attached', timeout: 2000 });
       checked ? await el.check({ force: true }) : await el.uncheck({ force: true });
@@ -159,8 +183,6 @@ export class InputHandler {
 
   /**
    * disabled / hidden のフィールドを操作可能にする
-   * ページのJSが依存関係を管理している場合、先にトリガーを操作する必要がある。
-   * ここではフォールバックとして、DOM属性を直接変更して強制的に有効化する。
    */
   private async ensureFieldEnabled(page: Page, selector: string): Promise<void> {
     await page.evaluate((sel) => {
@@ -195,9 +217,10 @@ export class InputHandler {
       if ((el as HTMLInputElement).readOnly) {
         (el as HTMLInputElement).readOnly = false;
       }
-    }, selector);
+    }, selector).catch(() => {
+      // ページ遷移中は無視
+    });
 
-    // 有効化後、少し待機してDOMの更新を待つ
     await page.waitForTimeout(100);
   }
 }

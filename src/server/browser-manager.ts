@@ -287,7 +287,10 @@ export class BrowserManager {
           // 入力
           const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
           this.log('info', `[${testCase.caseId}] ステップ${pageInput.stepNumber}: ${fieldsToFill.length}個のフィールドを入力 (URL: ${page.url()})`);
+          let navigationDetected = false;
           for (const field of fieldsToFill) {
+            if (navigationDetected) break; // ページ遷移後は残フィールドをスキップ
+
             const displayValue = field.type === 'password' ? '****' : field.value;
             appendLog('debug', `[${testCase.caseId}] 入力試行: [${field.type}] selector="${field.selector}" value="${displayValue}"`);
             try {
@@ -298,10 +301,23 @@ export class BrowserManager {
               appendLog('debug', `[${testCase.caseId}] 入力成功: [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
               this.log('info', `[${testCase.caseId}] ✅ 入力: [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
             } catch (err: any) {
-              // エラーでもEscapeで念のためポップアップを閉じる
-              await page.keyboard.press('Escape').catch(() => {});
-              this.log('warn', `[${testCase.caseId}] ❌ 入力エラー [${field.type}] selector="${field.selector}": ${err.message}`);
-              appendLog('debug', `[${testCase.caseId}] エラー詳細: ${err.stack || err.message}`);
+              // ページ遷移によるコンテキスト破壊を検出
+              const isContextDestroyed =
+                err.message?.includes('context was destroyed') ||
+                err.message?.includes('Execution context') ||
+                err.message?.includes('Target page, context or browser has been closed');
+
+              if (isContextDestroyed) {
+                this.log('warn', `[${testCase.caseId}] ⚠️ ページ遷移を検出 → 残りフィールドをスキップして次のステップへ`);
+                await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
+                await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+                navigationDetected = true;
+              } else {
+                // 通常エラー
+                await page.keyboard.press('Escape').catch(() => {});
+                this.log('warn', `[${testCase.caseId}] ❌ 入力エラー [${field.type}] selector="${field.selector}": ${err.message}`);
+                appendLog('debug', `[${testCase.caseId}] エラー詳細: ${err.stack || err.message}`);
+              }
             }
           }
 
