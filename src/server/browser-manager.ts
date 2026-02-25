@@ -314,8 +314,33 @@ export class BrowserManager {
           const submitSelector = pageInput.submitSelector || sessionPage?.submitSelector;
           if (submitSelector) {
             try {
-              this.log('info', `[${testCase.caseId}] 送信: ${submitSelector}`);
-              await page.locator(submitSelector).click();
+              const btn = page.locator(submitSelector).first();
+
+              // ボタンが表示されるまで待機（最大5秒）
+              await btn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+
+              // disabled 属性が外れるまで最大8秒待機（全フィールド入力後に活性化するボタン対応）
+              const enabledResult = await page.waitForFunction(
+                (sel: string) => {
+                  const el = document.querySelector(sel) as HTMLButtonElement | null;
+                  if (!el) return false;
+                  return !el.disabled && el.getAttribute('disabled') === null && !el.classList.contains('disabled');
+                },
+                submitSelector,
+                { timeout: 8000 }
+              ).catch(() => null);
+
+              if (!enabledResult) {
+                this.log('warn', `[${testCase.caseId}] ⚠️ ボタンが有効化されませんでした (force クリックで試みます): ${submitSelector}`);
+              } else {
+                this.log('info', `[${testCase.caseId}] ✅ ボタン活性化を確認`);
+              }
+
+              // 少し待ってからクリック（JSアニメーション等の完了待ち）
+              await page.waitForTimeout(300);
+              this.log('info', `[${testCase.caseId}] 送信クリック: ${submitSelector}`);
+              await btn.click({ force: true });
+
               await page.waitForLoadState('domcontentloaded', { timeout: this.settings.timeout.navigation });
               await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
             } catch (err: any) {
