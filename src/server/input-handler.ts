@@ -96,11 +96,27 @@ export class InputHandler {
   private async selectOption(page: Page, selector: string, value: string): Promise<void> {
     const el = page.locator(selector).first();
     await el.waitFor({ state: 'visible', timeout: 5000 });
-    try {
-      await el.selectOption({ value });
-    } catch {
-      await el.selectOption({ label: value });
-    }
+
+    // 1. value属性で選択
+    try { await el.selectOption({ value }); return; } catch { /* fall through */ }
+
+    // 2. ラベルテキストで選択
+    try { await el.selectOption({ label: value }); return; } catch { /* fall through */ }
+
+    // 3. JS直接操作（カスタムselect対応）
+    const jsOk = await page.evaluate(({ sel, val }) => {
+      const el = document.querySelector(sel) as HTMLSelectElement | null;
+      if (!el) return false;
+      // value一致
+      const opt = Array.from(el.options).find(o => o.value === val || o.text === val || o.text.includes(val));
+      if (!opt) return false;
+      el.value = opt.value;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }, { sel: selector, val: value });
+
+    if (!jsOk) throw new Error(`select option not found: value="${value}" in selector="${selector}"`);
   }
 
   private async setCheckbox(page: Page, selector: string, checked: boolean): Promise<void> {
