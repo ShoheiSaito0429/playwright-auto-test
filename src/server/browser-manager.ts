@@ -292,9 +292,14 @@ export class BrowserManager {
             appendLog('debug', `[${testCase.caseId}] 入力試行: [${field.type}] selector="${field.selector}" value="${displayValue}"`);
             try {
               await inputHandler.fillField(page, field);
+              // 入力後にポップアップが残っていれば閉じる
+              await page.keyboard.press('Escape').catch(() => {});
+              await page.waitForTimeout(100);
               appendLog('debug', `[${testCase.caseId}] 入力成功: [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
               this.log('info', `[${testCase.caseId}] ✅ 入力: [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
             } catch (err: any) {
+              // エラーでもEscapeで念のためポップアップを閉じる
+              await page.keyboard.press('Escape').catch(() => {});
               this.log('warn', `[${testCase.caseId}] ❌ 入力エラー [${field.type}] selector="${field.selector}": ${err.message}`);
               appendLog('debug', `[${testCase.caseId}] エラー詳細: ${err.stack || err.message}`);
             }

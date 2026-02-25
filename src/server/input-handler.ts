@@ -33,26 +33,28 @@ export class InputHandler {
   private async fillText(page: Page, selector: string, value: string): Promise<void> {
     const el = page.locator(selector).first();
 
-    // 要素が存在するか先に確認（存在しないなら即エラー）
     const count = await el.count();
     if (count === 0) throw new Error(`element not found: ${selector}`);
 
-    // visible を待つ（短め）→ダメなら force で直接fill
-    try {
-      await el.waitFor({ state: 'visible', timeout: 2000 });
-      await el.click();
+    // JS直接操作（クリック不要 → ポップアップ開かない）
+    const ok = await page.evaluate(({ sel, val }) => {
+      const el = document.querySelector(sel) as HTMLInputElement | HTMLTextAreaElement | null;
+      if (!el) return false;
+      el.focus();
+      el.value = val;
+      ['input', 'change', 'blur'].forEach(evt =>
+        el.dispatchEvent(new Event(evt, { bubbles: true }))
+      );
+      return true;
+    }, { sel: selector, val: value });
+
+    // ポップアップが開いていれば閉じる
+    await page.keyboard.press('Escape').catch(() => {});
+
+    if (!ok) {
+      // フォールバック: Playwright fill()
+      await el.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
       await el.fill(value);
-    } catch {
-      // 非表示・disabled でも JS 経由で値をセット
-      const ok = await page.evaluate(({ sel, val }) => {
-        const el = document.querySelector(sel) as HTMLInputElement | HTMLTextAreaElement | null;
-        if (!el) return false;
-        el.value = val;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        return true;
-      }, { sel: selector, val: value });
-      if (!ok) throw new Error(`fill failed: ${selector}`);
     }
   }
 
