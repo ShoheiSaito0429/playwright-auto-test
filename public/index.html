@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playwright Auto Test</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232734;
+    --border: #2d3348;
+    --text: #e4e6ef;
+    --text2: #8b90a5;
+    --primary: #6366f1;
+    --primary-hover: #818cf8;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #3b82f6;
+    --radius: 8px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  
+  /* Layout */
+  .app { display: flex; flex-direction: column; height: 100vh; }
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text2); }
+  .header .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text2); }
+  .header .status .dot.connected { background: var(--success); }
+  .header .status .dot.recording { background: var(--danger); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: 0.5; } }
+  
+  .tabs { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 24px; }
+  .tab { padding: 12px 20px; font-size: 14px; color: var(--text2); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+  
+  .main { flex: 1; overflow-y: auto; padding: 24px; }
+  
+  /* Common */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+  .card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--text2); }
+  
+  .btn { padding: 8px 16px; border-radius: 6px; border: none; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-danger { background: var(--danger); color: white; }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-success { background: var(--success); color: white; }
+  .btn-success:hover { background: #16a34a; }
+  .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .btn-outline:hover { background: var(--surface2); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  
+  .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+  
+  input[type="text"], input[type="password"], input[type="number"], input[type="url"],
+  textarea, select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 12px; font-size: 13px; width: 100%; transition: border-color 0.2s;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--primary); }
+  
+  .form-group { margin-bottom: 12px; }
+  .form-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 4px; font-weight: 500; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  
+  /* Table */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: var(--surface2); color: var(--text2); font-weight: 500; text-align: left; padding: 8px 12px; white-space: nowrap; }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  td input { width: 100%; min-width: 100px; }
+  tr:hover td { background: var(--surface2); }
+  
+  /* Transposed case table - sticky first columns */
+  .table-wrap { overflow-x: auto; max-height: 70vh; overflow-y: auto; }
+  .table-wrap table { border-collapse: separate; border-spacing: 0; }
+  .table-wrap th, .table-wrap td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
+  .table-wrap thead th { position: sticky; top: 0; z-index: 2; background: var(--surface2); }
+  
+  /* Log */
+  .log-panel { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); height: 200px; overflow-y: auto; padding: 8px 12px; font-family: 'Fira Code', monospace; font-size: 12px; }
+  .log-line { padding: 2px 0; }
+  .log-line.info { color: var(--info); }
+  .log-line.warn { color: var(--warning); }
+  .log-line.error { color: var(--danger); }
+  
+  /* Fields table */
+  .field-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .field-badge.text { background: #1e3a5f; color: #60a5fa; }
+  .field-badge.radio { background: #3b1f4e; color: #c084fc; }
+  .field-badge.select { background: #1a3d3d; color: #5eead4; }
+  .field-badge.checkbox { background: #3d3b1a; color: #fbbf24; }
+  .field-badge.file { background: #3d1a1a; color: #fca5a5; }
+  .field-badge.textarea { background: #1e3a5f; color: #60a5fa; }
+  .field-badge.password { background: #2d2d2d; color: #a1a1aa; }
+  
+  /* State badges */
+  .state-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-left: 4px; }
+  .state-badge.active { background: #052e16; color: #22c55e; }
+  .state-badge.disabled { background: #451a03; color: #f59e0b; }
+  .state-badge.readonly { background: #1e1b4b; color: #a5b4fc; }
+  .state-badge.hidden { background: #2c0b0e; color: #ef4444; }
+  .state-badge.collapsed { background: #2d2d2d; color: #a1a1aa; }
+  
+  /* Disabled field row styling */
+  tr.field-disabled td { opacity: 0.65; }
+  tr.field-hidden td { opacity: 0.45; background: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(255,255,255,0.02) 5px, rgba(255,255,255,0.02) 10px); }
+  
+  /* Step indicator */
+  .step-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .step-number { background: var(--primary); color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .step-info { flex: 1; }
+  .step-info .url { font-size: 12px; color: var(--text2); }
+  
+  /* Progress */
+  .progress-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .progress-bar .fill { height: 100%; background: var(--primary); transition: width 0.3s; }
+  
+  /* Screenshot grid */
+  .screenshot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .screenshot-item { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer; }
+  .screenshot-item img { width: 100%; display: block; }
+  .screenshot-item .caption { padding: 6px 8px; font-size: 11px; color: var(--text2); background: var(--surface2); }
+  
+  /* Hidden */
+  .hidden { display: none !important; }
+  
+  /* Result badge */
+  .result-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+  .result-badge.success { background: #052e16; color: var(--success); }
+  .result-badge.error { background: #2c0b0e; color: var(--danger); }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .form-row, .form-row-3 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Header -->
+  <div class="header">
+    <h1>🎭 Playwright Auto Test</h1>
+    <div class="status">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">未接続</span>
+    </div>
+  </div>
+  
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="record" onclick="switchTab('record')">📹 記録</div>
+    <div class="tab" data-tab="cases" onclick="switchTab('cases')">📋 テストケース</div>
+    <div class="tab" data-tab="replay" onclick="switchTab('replay')">▶️ 再生</div>
+    <div class="tab" data-tab="settings" onclick="switchTab('settings')">⚙️ 設定</div>
+  </div>
+  
+  <!-- Main Content -->
+  <div class="main">
+    
+    <!-- ===== 記録タブ ===== -->
+    <div id="tab-record" class="tab-content">
+      <div class="card">
+        <h2>📹 記録モード</h2>
+        <p style="color: var(--text2); font-size: 13px; margin-bottom: 16px;">
+          ブラウザを起動して手動操作を記録します。ページ読み込み完了時に入力フィールドが自動収集されます。
+        </p>
+        <div class="form-group">
+          <label>開始URL</label>
+          <input type="url" id="recordUrl" placeholder="https://example.com/login">
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary" id="btnStartRecord" onclick="startRecording()">▶️ 記録開始</button>
+          <button class="btn btn-outline" id="btnManualCollect" onclick="manualCollect()" disabled>🔍 手動収集</button>
+          <button class="btn btn-danger" id="btnStopRecord" onclick="stopRecording()" disabled>⏹ 記録停止・保存</button>
+        </div>
+      </div>
+      
+      <!-- ブラウザ状態 -->
+      <div class="card" id="browserStatus" style="display:none;">
+        <h2>🌐 ブラウザ状態</h2>
+        <div style="font-size: 13px; color: var(--text2);">
+          <div>URL: <span id="currentUrl" style="color: var(--text);">-</span></div>
+          <div>タイトル: <span id="currentTitle" style="color: var(--text);">-</span></div>
+        </div>
+      </div>
+      
+      <!-- 収集されたページ一覧 -->
+      <div id="collectedPages"></div>
+      
+      <!-- ログ -->
+      <div class="card">
+        <h2>📝 ログ</h2>
+        <div class="log-panel" id="logPanel"></div>
+      </div>
+    </div>
+    
+    <!-- ===== テストケースタブ ===== -->
+    <div id="tab-cases" class="tab-content hidden">
+      <div class="card">
+        <h2>📋 テストケース編集</h2>
+        <div class="form-group">
+          <label>セッション選択</label>
+          <select id="sessionSelect" onchange="loadSession()">
+            <option value="">-- 記録セッションを選択 --</option>
+          </select>
+        </div>
+      </div>
+      
+      <div id="caseEditor" style="display:none;">
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h2>テストケース一覧</h2>
+            <div class="btn-group">
+              <button class="btn btn-primary btn-sm" onclick="addTestCase()">＋ ケース追加</button>
+              <button class="btn btn-success btn-sm" onclick="saveTestCases()">💾 保存</button>
+              <button class="btn btn-outline btn-sm" onclick="exportExcel()">📥 Excel出力</button>
+            </div>
+          </div>
+          <div class="table-wrap" id="caseTable"></div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- ===== 再生タブ ===== -->
+    <div id="tab-replay" class="tab-content hidden">
+      <div class="card">
+        <h2>▶️ 再生モード</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label>セッション</label>
+            <select id="replaySessionSelect">
+              <option value="">-- 選択 --</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>テストケース</label>
+            <select id="replayCaseSelect">
+              <option value="">-- 全ケース実行 --</option>
+            </select>
+          </div>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-success" id="btnStartReplay" onclick="startReplay()">▶️ 再生開始</button>
+        </div>
+      </div>
+      
+      <!-- 実行進捗 -->
+      <div class="card" id="replayProgress" style="display:none;">
+        <h2>📊 実行状況</h2>
+        <div class="progress-bar" style="margin-bottom: 12px;">
+          <div class="fill" id="replayProgressFill" style="width: 0%"></div>
+        </div>
+        <div id="replayStatusText" style="font-size: 13px; color: var(--text2);"></div>
+      </div>
+      
+      <!-- 結果 -->
+      <div id="replayResults"></div>
+    </div>
+    
+    <!-- ===== 設定タブ ===== -->
+    <div id="tab-settings" class="tab-content hidden">
+      <div class="card">
+        <h2>⚙️ ブラウザ設定</h2>
+        <p style="color: var(--text2); font-size: 13px; margin-bottom: 16px;">
+          再生モードでのブラウザ動作を設定します。サイトURL・ログイン情報の事前設定は不要です。
+        </p>
+        <div class="form-row-3">
+          <div class="form-group">
+            <label>再生時の表示モード</label>
+            <select id="settHeadless">
+              <option value="false">表示あり（推奨）</option>
+              <option value="true">非表示（高速）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>操作遅延 (ms)</label>
+            <input type="number" id="settSlowMo" value="100">
+          </div>
+          <div class="form-group">
+            <label>スクリーンショット形式</label>
+            <select id="settFormat">
+              <option value="png">PNG</option>
+              <option value="jpeg">JPEG</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>画面幅</label>
+            <input type="number" id="settWidth" value="1280">
+          </div>
+          <div class="form-group">
+            <label>画面高さ</label>
+            <input type="number" id="settHeight" value="900">
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveSettings()">💾 設定を保存</button>
+      </div>
+    </div>
+    
+  </div>
+</div>
+
+<script>
+// ===== State =====
+let ws = null;
+let isRecording = false;
+let collectedPages = [];  // { id, url, title, stepNumber, fields, submitSelector, submitText }
+let currentSession = null;
+let testCases = [];
+let settings = {};
+
+// ===== WebSocket =====
+function connectWS() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${location.host}`);
+  
+  ws.onopen = () => {
+    document.getElementById('statusDot').className = 'dot connected';
+    document.getElementById('statusText').textContent = '接続中';
+  };
+  
+  ws.onclose = () => {
+    document.getElementById('statusDot').className = 'dot';
+    document.getElementById('statusText').textContent = '未接続';
+    setTimeout(connectWS, 3000);
+  };
+  
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    handleMessage(msg);
+  };
+}
+
+function sendWS(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+    case 'log':
+      addLog(msg.payload.level, msg.payload.message);
+      break;
+    
+    case 'browser:navigated':
+      document.getElementById('currentUrl').textContent = msg.payload.url;
+      document.getElementById('currentTitle').textContent = msg.payload.title;
+      break;
+    
+    case 'recording:status':
+      if (msg.payload.status === 'recording') {
+        document.getElementById('statusDot').className = 'dot recording';
+        document.getElementById('statusText').textContent = '記録中';
+        document.getElementById('browserStatus').style.display = '';
+      }
+      break;
+    
+    case 'recording:page-collected':
+    case 'fields:collected':
+      if (msg.type === 'recording:page-collected') {
+        // 同じステップの既存データを更新 or 追加
+        const existing = collectedPages.findIndex(p => p.url === msg.payload.url);
+        if (existing >= 0) {
+          collectedPages[existing] = msg.payload;
+        } else {
+          collectedPages.push(msg.payload);
+        }
+        renderCollectedPages();
+      }
+      break;
+    
+    case 'recording:complete':
+      currentSession = msg.payload;
+      isRecording = false;
+      updateRecordingUI();
+      addLog('info', '✅ 記録完了・保存しました');
+      break;
+    
+    case 'recording:error':
+      addLog('error', msg.payload.message);
+      break;
+    
+    case 'replay:progress':
+      updateReplayProgress(msg.payload);
+      break;
+    
+    case 'replay:complete':
+      renderReplayResults(msg.payload.results);
+      break;
+    
+    case 'replay:error':
+      addLog('error', `再生エラー: ${msg.payload.message}`);
+      break;
+  }
+}
+
+// ===== Recording =====
+function startRecording() {
+  const url = document.getElementById('recordUrl').value;
+  if (!url && !settings.baseUrl) {
+    alert('開始URLまたは設定のベースURLを入力してください');
+    return;
+  }
+  collectedPages = [];
+  renderCollectedPages();
+  isRecording = true;
+  updateRecordingUI();
+  sendWS({ type: 'recording:start', payload: { url: url || `${settings.baseUrl}${settings.loginPath}` } });
+}
+
+function manualCollect() {
+  sendWS({ type: 'recording:capture' });
+}
+
+async function stopRecording() {
+  const sessionName = `recording_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
+  const session = {
+    id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+    name: sessionName,
+    startUrl: document.getElementById('recordUrl').value,
+    pages: collectedPages,
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+  };
+  
+  await fetch(`/api/recordings/${sessionName}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(session),
+  });
+  
+  sendWS({ type: 'recording:stop' });
+  isRecording = false;
+  currentSession = session;
+  updateRecordingUI();
+  addLog('info', '✅ 記録を保存しました');
+  
+  // テストケースの自動生成を提案
+  if (collectedPages.length > 0) {
+    autoGenerateTestCase(session);
+  }
+}
+
+function updateRecordingUI() {
+  document.getElementById('btnStartRecord').disabled = isRecording;
+  document.getElementById('btnManualCollect').disabled = !isRecording;
+  document.getElementById('btnStopRecord').disabled = !isRecording;
+  
+  if (!isRecording) {
+    document.getElementById('statusDot').className = 'dot connected';
+    document.getElementById('statusText').textContent = '接続中';
+  }
+}
+
+function renderCollectedPages() {
+  const container = document.getElementById('collectedPages');
+  if (collectedPages.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  
+  let html = '';
+  for (const page of collectedPages) {
+    html += `
+      <div class="card">
+        <div class="step-header">
+          <div class="step-number">${page.stepNumber}</div>
+          <div class="step-info">
+            <div><strong>${page.title || '(無題)'}</strong></div>
+            <div class="url">${page.url}</div>
+          </div>
+          <span style="font-size: 12px; color: var(--text2);">
+            ${page.fields.length}フィールド
+            ${page.fields.filter(f => f.state === 'disabled').length > 0 ? `<span class="state-badge disabled">${page.fields.filter(f => f.state === 'disabled').length} disabled</span>` : ''}
+            ${page.fields.filter(f => f.state === 'hidden').length > 0 ? `<span class="state-badge hidden">${page.fields.filter(f => f.state === 'hidden').length} hidden</span>` : ''}
+            ${page.fields.filter(f => f.state === 'readonly').length > 0 ? `<span class="state-badge readonly">${page.fields.filter(f => f.state === 'readonly').length} readonly</span>` : ''}
+          </span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>タイプ</th>
+              <th>状態</th>
+              <th>ラベル</th>
+              <th>セレクタ</th>
+              <th>値</th>
+              <th>依存</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${page.fields.map(f => {
+              const stateClass = f.state || 'active';
+              const rowClass = stateClass === 'hidden' ? 'field-hidden' : (stateClass === 'disabled' ? 'field-disabled' : '');
+              return `
+              <tr class="${rowClass}">
+                <td><span class="field-badge ${f.type}">${f.type}</span></td>
+                <td><span class="state-badge ${stateClass}">${stateClass}</span></td>
+                <td>${escHtml(f.label || f.name || '-')}</td>
+                <td style="font-family: monospace; font-size: 12px; color: var(--text2); max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${escHtml(f.selector)}</td>
+                <td>
+                  <input type="text" value="${escAttr(f.type === 'password' ? '****' : (f.value || ''))}" 
+                    onchange="updateFieldValue('${page.id}', '${f.id}', this.value)" 
+                    style="min-width: 80px;">
+                </td>
+                <td style="font-size: 11px; color: var(--text2);">${f.dependsOn ? escHtml(f.dependsOn) : '-'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        ${page.submitSelector ? `
+          <div style="margin-top: 8px; font-size: 12px; color: var(--text2);">
+            送信ボタン: <code>${escHtml(page.submitSelector)}</code> "${escHtml(page.submitText || '')}"
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+}
+
+function updateFieldValue(pageId, fieldId, newValue) {
+  const page = collectedPages.find(p => p.id === pageId);
+  if (page) {
+    const field = page.fields.find(f => f.id === fieldId);
+    if (field) field.value = newValue;
+  }
+}
+
+// ===== Test Cases =====
+async function loadRecordingsList() {
+  const res = await fetch('/api/recordings');
+  const recordings = await res.json();
+  
+  const select1 = document.getElementById('sessionSelect');
+  const select2 = document.getElementById('replaySessionSelect');
+  
+  const options = recordings.map(r => `<option value="${r.name}">${r.name} (${r.pages}ページ)</option>`).join('');
+  select1.innerHTML = '<option value="">-- 記録セッションを選択 --</option>' + options;
+  select2.innerHTML = '<option value="">-- 選択 --</option>' + options;
+}
+
+async function loadSession() {
+  const name = document.getElementById('sessionSelect').value;
+  if (!name) {
+    document.getElementById('caseEditor').style.display = 'none';
+    return;
+  }
+  
+  const res = await fetch(`/api/recordings/${name}`);
+  currentSession = await res.json();
+  
+  // 既存テストケースを読み込み
+  try {
+    const caseRes = await fetch('/api/testcases');
+    const allCases = await caseRes.json();
+    const matchCase = allCases.find(c => c.sessionName === name);
+    testCases = matchCase?.cases || [];
+  } catch { testCases = []; }
+  
+  if (testCases.length === 0) {
+    autoGenerateTestCase(currentSession);
+  }
+  
+  document.getElementById('caseEditor').style.display = '';
+  renderCaseTable();
+}
+
+function autoGenerateTestCase(session) {
+  const tc = {
+    caseId: 'CASE_001',
+    caseName: '記録時の入力値',
+    enabled: true,
+    pageInputs: session.pages.map(p => ({
+      stepNumber: p.stepNumber,
+      pageId: p.id,
+      submitSelector: p.submitSelector || '',
+      fieldValues: p.fields.map(f => ({
+        fieldId: f.id,
+        selector: f.selector,
+        type: f.type,
+        label: f.label || f.name || '',
+        value: f.value || '',
+        filePath: f.filePath || '',
+      })),
+    })),
+  };
+  testCases = [tc];
+  renderCaseTable();
+}
+
+function addTestCase() {
+  if (!currentSession) return;
+  const num = testCases.length + 1;
+  const tc = {
+    caseId: `CASE_${String(num).padStart(3, '0')}`,
+    caseName: '',
+    enabled: true,
+    pageInputs: currentSession.pages.map(p => ({
+      stepNumber: p.stepNumber,
+      pageId: p.id,
+      submitSelector: p.submitSelector || '',
+      fieldValues: p.fields.map(f => ({
+        fieldId: f.id,
+        selector: f.selector,
+        type: f.type,
+        label: f.label || f.name || '',
+        value: '',
+        filePath: '',
+      })),
+    })),
+  };
+  testCases.push(tc);
+  renderCaseTable();
+}
+
+function copyTestCase(index) {
+  const src = testCases[index];
+  const num = testCases.length + 1;
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.caseId = `CASE_${String(num).padStart(3, '0')}`;
+  copy.caseName = src.caseName ? `${src.caseName} (コピー)` : 'コピー';
+  testCases.splice(index + 1, 0, copy);
+  renderCaseTable();
+}
+
+function renderCaseTable() {
+  if (!currentSession || testCases.length === 0) return;
+  
+  // 全フィールドをフラットに展開（行データ）
+  const fieldRows = [];
+  let lastStep = 0;
+  for (const page of currentSession.pages) {
+    for (const field of page.fields) {
+      fieldRows.push({
+        stepNumber: page.stepNumber,
+        pageTitle: page.title || `画面${page.stepNumber}`,
+        fieldId: field.id,
+        label: field.label || field.name || field.selector,
+        type: field.type,
+        selector: field.selector,
+        state: field.state || 'active',
+        isFirstInStep: page.stepNumber !== lastStep,
+        options: field.options || null,  // ラジオ・セレクトの選択肢
+      });
+      lastStep = page.stepNumber;
+    }
+  }
+
+  let html = '<table><thead><tr>';
+  // 左端: フィールド情報のヘッダー
+  html += '<th style="min-width:40px;">画面</th>';
+  html += '<th style="min-width:60px;">タイプ</th>';
+  html += '<th style="min-width:50px;">状態</th>';
+  html += '<th style="min-width:120px;">ラベル</th>';
+  // 各ケース列のヘッダー
+  testCases.forEach((tc, ci) => {
+    html += `<th style="min-width:130px;">
+      <div style="display:flex; align-items:center; gap:3px;">
+        <input type="checkbox" ${tc.enabled ? 'checked' : ''} onchange="testCases[${ci}].enabled = this.checked" title="有効/無効">
+        <input type="text" value="${escAttr(tc.caseId)}" onchange="testCases[${ci}].caseId = this.value" style="width:70px; font-size:11px; font-weight:600;">
+        <button class="btn btn-outline btn-sm" onclick="copyTestCase(${ci})" style="padding:2px 5px; font-size:10px;" title="ケースをコピー">📋</button>
+        <button class="btn btn-danger btn-sm" onclick="removeTestCase(${ci})" style="padding:2px 5px; font-size:10px;" title="ケースを削除">✕</button>
+      </div>
+    </th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  // ケース名行
+  html += '<tr style="background: var(--surface2);">';
+  html += '<td colspan="4" style="font-weight:500; font-size:12px; color:var(--text2);">ケース名</td>';
+  testCases.forEach((tc, ci) => {
+    html += `<td><input type="text" value="${escAttr(tc.caseName)}" onchange="testCases[${ci}].caseName = this.value" placeholder="ケース名"></td>`;
+  });
+  html += '</tr>';
+
+  // 区切り
+  html += `<tr><td colspan="${4 + testCases.length}" style="padding:4px; background:var(--border);"></td></tr>`;
+
+  // フィールド行
+  fieldRows.forEach((fr, ri) => {
+    // 画面の区切り線
+    if (fr.isFirstInStep && ri > 0) {
+      html += `<tr><td colspan="${4 + testCases.length}" style="padding:2px; background:var(--primary); opacity:0.3;"></td></tr>`;
+    }
+
+    const stateClass = fr.state;
+    const rowClass = stateClass === 'hidden' ? 'field-hidden' : (stateClass === 'disabled' ? 'field-disabled' : '');
+
+    html += `<tr class="${rowClass}">`;
+    // 画面番号（最初のフィールドのみ表示）
+    if (fr.isFirstInStep) {
+      const fieldsInStep = fieldRows.filter(f => f.stepNumber === fr.stepNumber).length;
+      html += `<td rowspan="${fieldsInStep}" style="vertical-align:top; text-align:center; font-weight:600; background:var(--surface2); border-right:2px solid var(--primary);">
+        <div style="font-size:16px;">${fr.stepNumber}</div>
+        <div style="font-size:10px; color:var(--text2); max-width:60px; overflow:hidden; text-overflow:ellipsis;">${escHtml(fr.pageTitle)}</div>
+      </td>`;
+    }
+    html += `<td><span class="field-badge ${fr.type}">${fr.type}</span></td>`;
+    html += `<td><span class="state-badge ${stateClass}">${stateClass}</span></td>`;
+    html += `<td title="${escAttr(fr.selector)}" style="font-size:12px;">${escHtml(fr.label.substring(0, 20))}</td>`;
+
+    // 各ケースの入力値（タイプ別にUIを切り替え）
+    testCases.forEach((tc, ci) => {
+      const pageInput = tc.pageInputs.find(pi => pi.stepNumber === fr.stepNumber);
+      const fieldValue = pageInput?.fieldValues.find(fv => fv.fieldId === fr.fieldId || fv.selector === fr.selector);
+      const val = fieldValue?.value || '';
+      const onChange = `updateCaseFieldValue(${ci}, ${fr.stepNumber}, '${fr.fieldId}', '${escAttr(fr.selector)}', this.value)`;
+
+      if (fr.type === 'radio' && fr.options && fr.options.length > 0) {
+        // ラジオボタン → ドロップダウン選択（ラベルとvalue両方表示）
+        html += `<td><select onchange="${onChange}" style="width:100%;">`;
+        html += `<option value="">-- 未選択 --</option>`;
+        fr.options.forEach(opt => {
+          const sel = val === opt.value ? 'selected' : '';
+          const label = opt.text && opt.text !== opt.value 
+            ? `${opt.text} (${opt.value})` 
+            : opt.value;
+          html += `<option value="${escAttr(opt.value)}" ${sel}>${escHtml(label)}</option>`;
+        });
+        html += `</select></td>`;
+
+      } else if (fr.type === 'select' && fr.options && fr.options.length > 0) {
+        // セレクトボックス → ドロップダウン選択（ラベルとvalue両方表示）
+        html += `<td><select onchange="${onChange}" style="width:100%;">`;
+        fr.options.forEach(opt => {
+          const sel = val === opt.value ? 'selected' : '';
+          const label = opt.text && opt.text !== opt.value 
+            ? `${opt.text} (${opt.value})` 
+            : (opt.text || opt.value);
+          html += `<option value="${escAttr(opt.value)}" ${sel}>${escHtml(label)}</option>`;
+        });
+        html += `</select></td>`;
+
+      } else if (fr.type === 'checkbox') {
+        // チェックボックス → トグル
+        const checked = val === 'true' || val === '1';
+        html += `<td style="text-align:center;">
+          <label style="cursor:pointer; user-select:none; display:flex; align-items:center; gap:4px; justify-content:center;">
+            <input type="checkbox" ${checked ? 'checked' : ''} 
+              onchange="updateCaseFieldValue(${ci}, ${fr.stepNumber}, '${fr.fieldId}', '${escAttr(fr.selector)}', this.checked ? 'true' : 'false'); this.nextElementSibling.textContent = this.checked ? 'ON' : 'OFF';">
+            <span style="font-size:11px; color:var(--text2);">${checked ? 'ON' : 'OFF'}</span>
+          </label>
+        </td>`;
+
+      } else if (fr.type === 'file') {
+        // ファイル → パス入力（わかりやすくプレースホルダー）
+        html += `<td><input type="text" value="${escAttr(val)}" onchange="${onChange}" placeholder="ファイルパス" style="font-size:11px;"></td>`;
+
+      } else {
+        // テキスト系 → 通常入力
+        html += `<td><input type="text" value="${escAttr(val)}" onchange="${onChange}"></td>`;
+      }
+    });
+
+    html += '</tr>';
+  });
+  
+  html += '</tbody></table>';
+  document.getElementById('caseTable').innerHTML = html;
+}
+
+function updateCaseFieldValue(caseIndex, stepNumber, fieldId, selector, value) {
+  const tc = testCases[caseIndex];
+  let pageInput = tc.pageInputs.find(pi => pi.stepNumber === stepNumber);
+  if (!pageInput) {
+    pageInput = { stepNumber, pageId: '', fieldValues: [], submitSelector: '' };
+    tc.pageInputs.push(pageInput);
+  }
+  let fv = pageInput.fieldValues.find(f => f.fieldId === fieldId || f.selector === selector);
+  if (fv) {
+    fv.value = value;
+  } else {
+    pageInput.fieldValues.push({ fieldId, selector, type: 'text', label: '', value });
+  }
+}
+
+function removeTestCase(index) {
+  testCases.splice(index, 1);
+  renderCaseTable();
+}
+
+async function saveTestCases() {
+  const name = document.getElementById('sessionSelect').value;
+  if (!name) return;
+  
+  await fetch(`/api/testcases/${name}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionName: name, cases: testCases }),
+  });
+  
+  addLog('info', '✅ テストケースを保存しました');
+  alert('保存しました');
+}
+
+async function exportExcel() {
+  const name = document.getElementById('sessionSelect').value;
+  if (!name || !currentSession) return;
+  
+  const res = await fetch(`/api/testcases/${name}/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: currentSession, cases: testCases }),
+  });
+  const result = await res.json();
+  if (result.ok) {
+    addLog('info', `✅ Excel出力: ${result.path}`);
+    alert(`Excelファイルを出力しました:\n${result.path}`);
+  }
+}
+
+// ===== Replay =====
+async function startReplay() {
+  const sessionName = document.getElementById('replaySessionSelect').value;
+  if (!sessionName) {
+    alert('セッションを選択してください');
+    return;
+  }
+  
+  document.getElementById('replayProgress').style.display = '';
+  document.getElementById('replayResults').innerHTML = '';
+  
+  sendWS({
+    type: 'replay:start',
+    payload: { sessionId: sessionName, caseIds: [] },
+  });
+}
+
+function updateReplayProgress(payload) {
+  const pct = payload.total > 0 ? (payload.step / payload.total) * 100 : 0;
+  document.getElementById('replayProgressFill').style.width = `${pct}%`;
+  document.getElementById('replayStatusText').textContent = `[${payload.caseId}] ${payload.status}`;
+}
+
+function renderReplayResults(results) {
+  document.getElementById('replayProgress').style.display = 'none';
+  
+  let html = '<div class="card"><h2>📊 実行結果</h2>';
+  const success = results.filter(r => r.status === 'success').length;
+  html += `<p style="margin-bottom:12px; font-size:14px;">成功: ${success} / 失敗: ${results.length - success} / 合計: ${results.length}</p>`;
+  
+  results.forEach(r => {
+    html += `
+      <div style="padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <span class="result-badge ${r.status}">${r.status === 'success' ? '✅ 成功' : '❌ 失敗'}</span>
+          <strong>${escHtml(r.caseId)}</strong>
+          <span style="color: var(--text2); font-size: 13px;">${escHtml(r.caseName)}</span>
+          <span style="margin-left: auto; font-size: 12px; color: var(--text2);">${(r.duration / 1000).toFixed(1)}秒</span>
+        </div>
+        ${r.error ? `<div style="color: var(--danger); font-size: 13px;">エラー: ${escHtml(r.error)}</div>` : ''}
+        ${r.screenshots?.length > 0 ? `
+          <div class="screenshot-grid">
+            ${r.screenshots.map(s => {
+              const filename = s.split('/').pop();
+              const relativePath = s.replace(/^.*data\/screenshots\//, '');
+              return `<div class="screenshot-item">
+                <img src="/screenshots/${relativePath}" loading="lazy" onclick="window.open(this.src)">
+                <div class="caption">${filename}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  });
+  
+  html += '</div>';
+  document.getElementById('replayResults').innerHTML = html;
+}
+
+// ===== Settings =====
+async function loadSettings() {
+  const res = await fetch('/api/settings');
+  settings = await res.json();
+  
+  document.getElementById('settHeadless').value = String(settings.browser?.headless ?? false);
+  document.getElementById('settSlowMo').value = settings.browser?.slowMo ?? 100;
+  document.getElementById('settFormat').value = settings.screenshot?.format || 'png';
+  document.getElementById('settWidth').value = settings.browser?.viewport?.width ?? 1280;
+  document.getElementById('settHeight').value = settings.browser?.viewport?.height ?? 900;
+}
+
+async function saveSettings() {
+  const updated = {
+    browser: {
+      headless: document.getElementById('settHeadless').value === 'true',
+      slowMo: parseInt(document.getElementById('settSlowMo').value) || 100,
+      viewport: {
+        width: parseInt(document.getElementById('settWidth').value) || 1280,
+        height: parseInt(document.getElementById('settHeight').value) || 900,
+      },
+    },
+    screenshot: {
+      fullPage: true,
+      format: document.getElementById('settFormat').value,
+    },
+    timeout: settings.timeout || { navigation: 30000, action: 10000 },
+  };
+  
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updated),
+  });
+  
+  settings = updated;
+  alert('設定を保存しました');
+}
+
+// ===== Tabs =====
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab[data-tab="${name}"]`).classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+  document.getElementById(`tab-${name}`).classList.remove('hidden');
+  
+  if (name === 'cases' || name === 'replay') loadRecordingsList();
+}
+
+// ===== Log =====
+function addLog(level, message) {
+  const panel = document.getElementById('logPanel');
+  const time = new Date().toLocaleTimeString('ja-JP');
+  const line = document.createElement('div');
+  line.className = `log-line ${level}`;
+  line.textContent = `[${time}] ${message}`;
+  panel.appendChild(line);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+// ===== Utils =====
+function escHtml(str) {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function escAttr(str) {
+  return String(str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ===== Init =====
+window.addEventListener('load', () => {
+  connectWS();
+  loadSettings();
+});
+</script>
+</body>
+</html>
