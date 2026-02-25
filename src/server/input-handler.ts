@@ -39,14 +39,33 @@ export class InputHandler {
   }
 
   private async selectRadio(page: Page, selector: string, value: string): Promise<void> {
-    // value指定でラジオを選択
-    const byValue = page.locator(`${selector}[value="${value}"]`);
+    const specificSelector = `${selector}[value="${value}"]`;
+    const byValue = page.locator(specificSelector);
+
     if (await byValue.count() > 0) {
-      await byValue.check();
+      // 対象ラジオを直接有効化
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel) as HTMLInputElement | null;
+        if (!el) return;
+        el.disabled = false;
+        el.removeAttribute('disabled');
+        const parent = el.parentElement;
+        if (parent && getComputedStyle(parent).display === 'none') parent.style.display = '';
+      }, specificSelector);
+      try {
+        await byValue.first().check({ force: true });
+      } catch {
+        await byValue.first().click({ force: true });
+      }
       return;
     }
-    // selectorそのものを試す
-    await page.locator(selector).first().check();
+
+    // value が一致するものがない場合はグループ先頭を選択
+    try {
+      await page.locator(selector).first().check({ force: true });
+    } catch {
+      await page.locator(selector).first().click({ force: true });
+    }
   }
 
   private async selectOption(page: Page, selector: string, value: string): Promise<void> {
@@ -61,8 +80,12 @@ export class InputHandler {
 
   private async setCheckbox(page: Page, selector: string, checked: boolean): Promise<void> {
     const el = page.locator(selector).first();
-    await el.waitFor({ state: 'visible', timeout: 5000 });
-    checked ? await el.check() : await el.uncheck();
+    try {
+      await el.waitFor({ state: 'attached', timeout: 5000 });
+      checked ? await el.check({ force: true }) : await el.uncheck({ force: true });
+    } catch {
+      checked ? await el.check({ force: true }) : await el.click({ force: true });
+    }
   }
 
   private async uploadFile(page: Page, selector: string, filePath: string): Promise<void> {
