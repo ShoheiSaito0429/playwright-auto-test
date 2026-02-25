@@ -40,6 +40,21 @@ app.use(express.static(path.resolve(__dirname, '../../public')));
 // スクリーンショット画像の配信
 app.use('/screenshots', express.static(path.resolve('data/screenshots')));
 
+// ログファイル一覧・ダウンロード
+app.get('/api/logs', (_req, res) => {
+  const dir = path.resolve('data/logs');
+  if (!fs.existsSync(dir)) return res.json([]);
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.log')).sort().reverse();
+  res.json(files);
+});
+app.get('/api/logs/:filename', (req, res) => {
+  const filePath = path.resolve('data/logs', req.params.filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
+  res.send(fs.readFileSync(filePath, 'utf-8'));
+});
+
 // === API: 設定 ===
 app.get('/api/settings', (_req, res) => {
   res.json(loadSettings());

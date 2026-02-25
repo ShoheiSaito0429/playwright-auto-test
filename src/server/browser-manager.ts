@@ -12,6 +12,21 @@ function timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 }
 
+function getLogFilePath(): string {
+  const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const dir = path.resolve('data/logs');
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${date}.log`);
+}
+
+function appendLog(level: string, message: string): void {
+  const time = new Date().toLocaleTimeString('ja-JP', { hour12: false });
+  const line = `[${time}] [${level.toUpperCase()}] ${message}\n`;
+  try {
+    fs.appendFileSync(getLogFilePath(), line, 'utf-8');
+  } catch { /* ログ失敗は無視 */ }
+}
+
 export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -35,6 +50,7 @@ export class BrowserManager {
     this.send({ type: 'log', payload: { level, message } });
     const icon = level === 'info' ? 'ℹ️' : level === 'warn' ? '⚠️' : '❌';
     console.log(`${icon} ${message}`);
+    appendLog(level, message);
   }
 
   // ===== 記録モード =====
@@ -77,7 +93,8 @@ export class BrowserManager {
     });
 
     this.log('info', `ページを開いています: ${startUrl}`);
-    await this.page.goto(startUrl, { waitUntil: 'networkidle', timeout: this.settings.timeout.navigation });
+    await this.page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: this.settings.timeout.navigation });
+    await this.page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
 
     // MutationObserver は load イベント内の autoCollectFields() で注入済みのため、
     // ここでは二重登録を避けるために再呼び出しを省略
@@ -240,7 +257,9 @@ export class BrowserManager {
         const startUrl = session.startUrl || session.pages[0]?.url;
         if (!startUrl) throw new Error('開始URLが不明です');
 
-        await page.goto(startUrl, { waitUntil: 'networkidle', timeout: this.settings.timeout.navigation });
+        await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: this.settings.timeout.navigation });
+        // networkidle を best-effort で待つ（タイムアウトしても続行）
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
 
         // 全ステップを順番に実行（ログイン画面も含む）
         for (let i = 0; i < testCase.pageInputs.length; i++) {
@@ -284,7 +303,8 @@ export class BrowserManager {
             try {
               this.log('info', `[${testCase.caseId}] 送信: ${submitSelector}`);
               await page.locator(submitSelector).click();
-              await page.waitForLoadState('networkidle', { timeout: this.settings.timeout.navigation });
+              await page.waitForLoadState('domcontentloaded', { timeout: this.settings.timeout.navigation });
+              await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
             } catch (err: any) {
               this.log('warn', `[${testCase.caseId}] 遷移エラー: ${err.message}`);
             }
