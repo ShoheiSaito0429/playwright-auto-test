@@ -40,32 +40,57 @@ export class InputHandler {
 
   private async selectRadio(page: Page, selector: string, value: string): Promise<void> {
     const specificSelector = `${selector}[value="${value}"]`;
-    const byValue = page.locator(specificSelector);
 
-    if (await byValue.count() > 0) {
-      // 対象ラジオを直接有効化
-      await page.evaluate((sel) => {
-        const el = document.querySelector(sel) as HTMLInputElement | null;
-        if (!el) return;
-        el.disabled = false;
-        el.removeAttribute('disabled');
-        const parent = el.parentElement;
-        if (parent && getComputedStyle(parent).display === 'none') parent.style.display = '';
-      }, specificSelector);
-      try {
-        await byValue.first().check({ force: true });
-      } catch {
-        await byValue.first().click({ force: true });
+    // --- JS経由で確実に選択（カスタムUIサイト対応） ---
+    const jsResult = await page.evaluate(({ sel, val, groupSel }) => {
+      // 値指定で検索
+      let radio = document.querySelector(sel) as HTMLInputElement | null;
+      // 見つからない場合はグループ内から value でマッチ
+      if (!radio) {
+        const radios = Array.from(document.querySelectorAll(groupSel)) as HTMLInputElement[];
+        radio = radios.find(r => r.value === val) || radios[0] || null;
       }
-      return;
+      if (!radio) return { ok: false, reason: 'element not found' };
+
+      // 有効化
+      radio.disabled = false;
+      radio.removeAttribute('disabled');
+
+      // checked をセット
+      radio.checked = true;
+
+      // イベントを全種類発火（jQuery/カスタムJS対応）
+      ['click', 'mousedown', 'mouseup', 'input', 'change'].forEach(evtName => {
+        const evt = evtName.startsWith('mouse')
+          ? new MouseEvent(evtName, { bubbles: true, cancelable: true })
+          : new Event(evtName, { bubbles: true, cancelable: true });
+        radio!.dispatchEvent(evt);
+      });
+
+      // 関連ラベルもクリック（スタイル変更用のJSトリガー）
+      const id = radio.id;
+      const label = id
+        ? document.querySelector(`label[for="${id}"]`) as HTMLElement | null
+        : radio.closest('label') as HTMLElement | null;
+      if (label) {
+        label.click();
+        label.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      }
+
+      return { ok: true, labelClicked: !!label, value: radio.value };
+    }, { sel: specificSelector, val: value, groupSel: selector });
+
+    if (jsResult.ok) return;
+
+    // JS経由で失敗した場合は Playwright の click fallback
+    const locator = page.locator(specificSelector).first();
+    if (await locator.count() > 0) {
+      try { await locator.check({ force: true }); return; } catch { /* fall through */ }
+      try { await locator.click({ force: true }); return; } catch { /* fall through */ }
     }
 
-    // value が一致するものがない場合はグループ先頭を選択
-    try {
-      await page.locator(selector).first().check({ force: true });
-    } catch {
-      await page.locator(selector).first().click({ force: true });
-    }
+    // 最終手段: グループ先頭
+    await page.locator(selector).first().click({ force: true }).catch(() => {});
   }
 
   private async selectOption(page: Page, selector: string, value: string): Promise<void> {
