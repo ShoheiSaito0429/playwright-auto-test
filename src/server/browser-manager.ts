@@ -261,9 +261,12 @@ export class BrowserManager {
         // networkidle を best-effort で待つ（タイムアウトしても続行）
         await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
 
+        // stepNumber順にソートして実行
+        const sortedInputs = [...testCase.pageInputs].sort((a, b) => a.stepNumber - b.stepNumber);
+
         // 全ステップを順番に実行（ログイン画面も含む）
-        for (let i = 0; i < testCase.pageInputs.length; i++) {
-          const pageInput = testCase.pageInputs[i];
+        for (let i = 0; i < sortedInputs.length; i++) {
+          const pageInput = sortedInputs[i];
           const sessionPage = session.pages.find(p => p.stepNumber === pageInput.stepNumber);
 
           this.send({
@@ -271,7 +274,7 @@ export class BrowserManager {
             payload: {
               caseId: testCase.caseId,
               step: i + 1,
-              total: testCase.pageInputs.length,
+              total: sortedInputs.length,
               status: `ステップ${pageInput.stepNumber}実行中...`,
             },
           });

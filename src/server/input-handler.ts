@@ -32,10 +32,28 @@ export class InputHandler {
 
   private async fillText(page: Page, selector: string, value: string): Promise<void> {
     const el = page.locator(selector).first();
-    await el.waitFor({ state: 'visible', timeout: 5000 });
-    await el.click();
-    await el.fill('');
-    await el.fill(value);
+
+    // 要素が存在するか先に確認（存在しないなら即エラー）
+    const count = await el.count();
+    if (count === 0) throw new Error(`element not found: ${selector}`);
+
+    // visible を待つ（短め）→ダメなら force で直接fill
+    try {
+      await el.waitFor({ state: 'visible', timeout: 2000 });
+      await el.click();
+      await el.fill(value);
+    } catch {
+      // 非表示・disabled でも JS 経由で値をセット
+      const ok = await page.evaluate(({ sel, val }) => {
+        const el = document.querySelector(sel) as HTMLInputElement | HTMLTextAreaElement | null;
+        if (!el) return false;
+        el.value = val;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }, { sel: selector, val: value });
+      if (!ok) throw new Error(`fill failed: ${selector}`);
+    }
   }
 
   private async selectRadio(page: Page, selector: string, value: string): Promise<void> {
@@ -95,7 +113,9 @@ export class InputHandler {
 
   private async selectOption(page: Page, selector: string, value: string): Promise<void> {
     const el = page.locator(selector).first();
-    await el.waitFor({ state: 'visible', timeout: 5000 });
+    const count = await el.count();
+    if (count === 0) throw new Error(`element not found: ${selector}`);
+    await el.waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
 
     // 1. value属性で選択
     try { await el.selectOption({ value }); return; } catch { /* fall through */ }
@@ -121,8 +141,9 @@ export class InputHandler {
 
   private async setCheckbox(page: Page, selector: string, checked: boolean): Promise<void> {
     const el = page.locator(selector).first();
+    if (await el.count() === 0) throw new Error(`element not found: ${selector}`);
     try {
-      await el.waitFor({ state: 'attached', timeout: 5000 });
+      await el.waitFor({ state: 'attached', timeout: 2000 });
       checked ? await el.check({ force: true }) : await el.uncheck({ force: true });
     } catch {
       checked ? await el.check({ force: true }) : await el.click({ force: true });
