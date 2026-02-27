@@ -85,8 +85,9 @@ export class BrowserManager {
         if (el.id) return '#' + el.id;
         var tag = (el.tagName || '').toLowerCase();
         if (el.className && typeof el.className === 'string') {
-          var cls = el.className.trim().split(/\\s+/).filter(function(c){ return c; })[0];
-          if (cls) return tag + '.' + cls;
+          // 全クラスを結合して一意なセレクターにする（例: a.s-btn.s-not_member）
+          var classes = el.className.trim().split(/\\s+/).filter(function(c){ return c; });
+          if (classes.length) return tag + '.' + classes.join('.');
         }
         if (el.getAttribute && el.getAttribute('name')) return tag + '[name="' + el.getAttribute('name') + '"]';
         var text = (el.textContent || '').trim().substring(0, 20);
@@ -424,6 +425,9 @@ export class BrowserManager {
         recordedPage.submitSelector = submitInfo.selector;
         recordedPage.submitText = submitInfo.text;
       }
+
+      // サーバー側セッションにも追加（URLデdup・Case3判定に必要）
+      this.session.pages.push(recordedPage);
 
       this.send({
         type: 'recording:page-collected',

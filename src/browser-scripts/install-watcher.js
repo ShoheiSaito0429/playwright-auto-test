@@ -23,8 +23,9 @@
     if (el.id) return `#${el.id}`;
     const tag = el.tagName.toLowerCase();
     if (el.className && typeof el.className === 'string') {
-      const cls = el.className.trim().split(/\s+/)[0];
-      if (cls) return `${tag}.${cls}`;
+      // 全クラスを結合して一意なセレクターにする（例: a.s-btn.s-not_member）
+      const classes = el.className.trim().split(/\s+/).filter(Boolean);
+      if (classes.length) return `${tag}.${classes.join('.')}`;
     }
     if (el.getAttribute('name')) return `${tag}[name="${el.getAttribute('name')}"]`;
     const text = el.textContent?.trim().substring(0, 20) || '';
