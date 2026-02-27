@@ -42,8 +42,9 @@ export class BrowserManager {
   private recording = false;
   private session: RecordingSession | null = null;
   private stepCounter = 0;
-  // ページ遷移前にconsole経由で受け取ったボタンクリック情報（①対応）
-  private _pendingClickedSubmit: { selector: string; text: string } | null = null;
+  // ページ遷移前にconsole経由で受け取ったボタンクリック情報（キュー方式）
+  // 複数ボタンを素早く押しても全て保持される
+  private _pendingClickedSubmits: { selector: string; text: string }[] = [];
   // autoCollectFields の並行実行防止フラグ
   private _collecting = false;
   private _pendingCollect = false;
@@ -128,6 +129,7 @@ export class BrowserManager {
     this.page = await this.context.newPage();
     this.recording = true;
     this.stepCounter = 0;
+    this._pendingClickedSubmits = []; // クリックキューをリセット
 
     this.session = {
       id: uuid(),
@@ -145,7 +147,11 @@ export class BrowserManager {
       if (text.startsWith('__SUBMIT_CLICK__')) {
         try {
           const data = JSON.parse(text.slice('__SUBMIT_CLICK__'.length));
-          this._pendingClickedSubmit = data;
+          // キューに追加（上書きでなく蓄積、直前の重複は排除）
+          const lastQ = this._pendingClickedSubmits[this._pendingClickedSubmits.length - 1];
+          if (!lastQ || lastQ.selector !== data.selector || lastQ.text !== data.text) {
+            this._pendingClickedSubmits.push(data);
+          }
           this.log('info', `🖱️ ボタンクリック事前検知: ${data.selector} "${data.text}"`);
         } catch {}
       }
@@ -215,18 +221,18 @@ export class BrowserManager {
     const capturedUrl = this.page.url();
 
     try {
-      // クリックされたボタン情報を取得
-      // ①優先: console.log経由で事前に受け取った情報（ページ遷移後でも残る）
-      // ②フォールバック: ページのwindow変数から取得（同一ページ内遷移用）
-      let clickedSubmit: { selector: string; text: string } | null = this._pendingClickedSubmit;
-      this._pendingClickedSubmit = null;
-      if (!clickedSubmit) {
+      // クリックされたボタン情報をキューからすべて取得
+      // ①優先: console.log経由で事前に蓄積した情報（キュー方式）
+      // ②フォールバック: ページのwindow変数から取得
+      let pendingClicks = this._pendingClickedSubmits.splice(0); // 全取り出し
+      if (pendingClicks.length === 0) {
         try {
-          clickedSubmit = await this.page.evaluate(() => {
-            const info = (window as any).__lastClickedSubmit;
+          const info = await this.page.evaluate(() => {
+            const i = (window as any).__lastClickedSubmit;
             (window as any).__lastClickedSubmit = null;
-            return info || null;
+            return i || null;
           });
+          if (info) pendingClicks = [info];
         } catch { /* ページ遷移中は無視 */ }
       }
 
@@ -234,20 +240,23 @@ export class BrowserManager {
       const prevPage = this.session.pages.length > 0
         ? this.session.pages[this.session.pages.length - 1]
         : null;
-      if (clickedSubmit && prevPage) {
+      if (pendingClicks.length > 0 && prevPage) {
         if (prevPage.url !== capturedUrl) {
-          // ナビゲーション後 → 前ページのsubmitSelectorとして記録
-          prevPage.submitSelector = clickedSubmit.selector;
-          prevPage.submitText = clickedSubmit.text;
-          this.log('info', `🎯 submitSelector記録: ${clickedSubmit.selector} "${clickedSubmit.text}"`);
+          // ナビゲーション後 → 最後のクリックを前ページのsubmitSelectorとして記録
+          const lastClick = pendingClicks[pendingClicks.length - 1];
+          prevPage.submitSelector = lastClick.selector;
+          prevPage.submitText = lastClick.text;
+          this.log('info', `🎯 submitSelector記録: ${lastClick.selector} "${lastClick.text}"`);
           this.send({
             type: 'recording:submit-detected',
-            payload: { pageId: prevPage.id, submitSelector: clickedSubmit.selector, submitText: clickedSubmit.text },
+            payload: { pageId: prevPage.id, submitSelector: lastClick.selector, submitText: lastClick.text },
           });
-          clickedSubmit = null; // 処理済みとしてクリア
+          pendingClicks = []; // 処理済みとしてクリア
         }
         // 同じURLの場合はURLdedup処理で preClicks に追加するので、ここでは何もしない
       }
+      // 後続コードで使えるよう lastClickedSubmit を設定（旧コードとの互換性）
+      const clickedSubmit = pendingClicks.length > 0 ? pendingClicks[pendingClicks.length - 1] : null;
 
       await this.page.waitForLoadState('domcontentloaded');
       
@@ -302,14 +311,17 @@ export class BrowserManager {
         ? this.session.pages[this.session.pages.length - 1]
         : null;
       if (lastPage && lastPage.url === url) {
-        // 同一URL内でのボタンクリック（モーダル閉じなど）→ preClicks として記録
-        if (clickedSubmit) {
+        // 同一URL内でのボタンクリック（モーダル閉じなど）→ preClicks として全て記録
+        if (pendingClicks.length > 0) {
           if (!lastPage.preClicks) lastPage.preClicks = [];
-          lastPage.preClicks.push({ selector: clickedSubmit.selector, text: clickedSubmit.text });
-          this.log('info', `🖱️ preClick記録: ${clickedSubmit.selector} "${clickedSubmit.text}"`);
+          for (const pc of pendingClicks) {
+            lastPage.preClicks.push({ selector: pc.selector, text: pc.text });
+            this.log('info', `🖱️ preClick記録: ${pc.selector} "${pc.text}"`);
+          }
+          const last = pendingClicks[pendingClicks.length - 1];
           this.send({
             type: 'recording:submit-detected',
-            payload: { pageId: lastPage.id, submitSelector: `[preClick] ${clickedSubmit.text}`, submitText: clickedSubmit.text },
+            payload: { pageId: lastPage.id, submitSelector: `[preClick] ${last.text}`, submitText: last.text },
           });
         }
         // フィールドをマージ（既存に含まれないものだけ追加）
@@ -324,7 +336,7 @@ export class BrowserManager {
       }
 
       // フィールドが0件 かつ ボタンクリックも無し → 記録不要
-      if (fields.length === 0 && !clickedSubmit) return;
+      if (fields.length === 0 && pendingClicks.length === 0) return;
 
       this.stepCounter++;
       const pageId = uuid();
@@ -339,10 +351,10 @@ export class BrowserManager {
       };
 
       // Case 3: 最初のページでモーダルボタンクリックが先に発生していた場合
-      // lastPageが存在しないためsubmitSelectorに使われなかったclickedSubmitをpreClicksとして保存
-      if (clickedSubmit && this.session.pages.length === 0) {
-        recordedPage.preClicks = [{ selector: clickedSubmit.selector, text: clickedSubmit.text }];
-        this.log('info', `🖱️ 初回ページのpreClickを記録: ${clickedSubmit.selector} "${clickedSubmit.text}"`);
+      // lastPageが存在しないためsubmitSelectorに使われなかったclicksをpreClicksとして保存（全件）
+      if (pendingClicks.length > 0 && this.session.pages.length === 0) {
+        recordedPage.preClicks = pendingClicks.map(pc => ({ selector: pc.selector, text: pc.text }));
+        this.log('info', `🖱️ 初回ページのpreClickを記録: ${pendingClicks.map(pc => `${pc.selector} "${pc.text}"`).join(', ')}`);
       }
 
       // 送信ボタン検出（javascript:リンク対応強化）
