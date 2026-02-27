@@ -335,47 +335,76 @@ wss.on('connection', (ws: WebSocket) => {
         }
         case 'replay:start': {
           settings = loadSettings();
-          const { sessionId, caseIds } = msg.payload;
-          // セッションとケースを読み込み
+          const { sessionId, caseIds, items } = msg.payload;
+
           const recDir = path.resolve('data/recordings');
-          const recFiles = fs.readdirSync(recDir).filter(f => f.endsWith('.json'));
-          let session: RecordingSession | null = null;
-          for (const f of recFiles) {
-            const data = JSON.parse(fs.readFileSync(path.join(recDir, f), 'utf-8'));
-            if (data.id === sessionId || data.name === sessionId) {
-              session = data;
+          const caseDir = path.resolve('data/testcases');
+
+          // セッション名からRecordingSessionを読み込むヘルパー
+          const loadSession = (nameOrId: string): RecordingSession | null => {
+            const recFiles = fs.readdirSync(recDir).filter(f => f.endsWith('.json'));
+            for (const f of recFiles) {
+              const data = JSON.parse(fs.readFileSync(path.join(recDir, f), 'utf-8'));
+              if (data.id === nameOrId || data.name === nameOrId) return data;
+            }
+            return null;
+          };
+
+          // セッション名からTestCaseを取得するヘルパー
+          const loadTestCase = (sessionName: string, caseId: string): TestCase | null => {
+            const caseFiles = fs.readdirSync(caseDir).filter(f => f.endsWith('.json'));
+            for (const f of caseFiles) {
+              const data = JSON.parse(fs.readFileSync(path.join(caseDir, f), 'utf-8'));
+              if (data.sessionName === sessionName || f === `${sessionName}.json`) {
+                const found = data.cases?.find((c: TestCase) => c.caseId === caseId);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+
+          const replayManager = new BrowserManager(settings, send);
+
+          // ===== マージモード: items配列で複数セッション実行 =====
+          if (items && Array.isArray(items) && items.length > 0) {
+            const suiteItems: { session: RecordingSession; testCase: TestCase }[] = [];
+            for (const item of items as { sessionName: string; caseId: string }[]) {
+              const s = loadSession(item.sessionName);
+              const tc = loadTestCase(item.sessionName, item.caseId);
+              if (s && tc) {
+                suiteItems.push({ session: s, testCase: tc });
+              } else {
+                console.warn(`マージ: セッション/ケース未発見 → ${item.sessionName} / ${item.caseId}`);
+              }
+            }
+            if (suiteItems.length === 0) {
+              send({ type: 'replay:error', payload: { message: '実行可能なケースが見つかりません' } });
               break;
             }
+            await replayManager.startReplaySuite(suiteItems);
+            break;
           }
+
+          // ===== 通常モード: 単一セッション =====
+          const session = loadSession(sessionId);
           if (!session) {
             send({ type: 'replay:error', payload: { message: 'セッションが見つかりません' } });
             break;
           }
 
-          // テストケースを読み込み（セッション名と同名のファイルだけを直接読む）
-          const caseDir = path.resolve('data/testcases');
           let allCases: TestCase[] = [];
-          const caseFilePath = path.join(caseDir, `${session.name}.json`);
-          if (fs.existsSync(caseFilePath)) {
-            const data = JSON.parse(fs.readFileSync(caseFilePath, 'utf-8'));
-            if (data.cases) allCases = data.cases;
-          } else {
-            // フォールバック: sessionNameフィールドで検索（旧形式互換）
-            const caseFiles = fs.readdirSync(caseDir).filter(f => f.endsWith('.json'));
-            for (const f of caseFiles) {
-              const data = JSON.parse(fs.readFileSync(path.join(caseDir, f), 'utf-8'));
-              if (data.cases && data.sessionName === session.name) {
-                allCases = data.cases;
-                break;
-              }
+          const caseFiles2 = fs.readdirSync(caseDir).filter(f => f.endsWith('.json'));
+          for (const f of caseFiles2) {
+            const data = JSON.parse(fs.readFileSync(path.join(caseDir, f), 'utf-8'));
+            if (data.cases && (data.sessionName === session.name || f === `${session.name}.json`)) {
+              allCases = [...allCases, ...data.cases];
             }
           }
 
           const targetCases = caseIds.length > 0
-            ? allCases.filter(c => caseIds.includes(c.caseId))
+            ? allCases.filter((c: TestCase) => caseIds.includes(c.caseId))
             : allCases;
 
-          const replayManager = new BrowserManager(settings, send);
           await replayManager.startReplay(session, targetCases);
           break;
         }

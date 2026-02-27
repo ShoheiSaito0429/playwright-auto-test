@@ -383,14 +383,20 @@ export class BrowserManager {
   // ===== 再生モード =====
   // ログイン画面もステップ1として扱う。全画面同じロジックで入力→送信を繰り返す。
 
+  // 通常モード用ラッパー（単一セッション）
   async startReplay(session: RecordingSession, testCases: TestCase[]): Promise<void> {
+    const enabledCases = testCases.filter(c => c.enabled);
+    await this.startReplaySuite(enabledCases.map(tc => ({ session, testCase: tc })));
+  }
+
+  // マージモード用: 複数セッションのテストケースを実行
+  async startReplaySuite(items: { session: RecordingSession; testCase: TestCase }[]): Promise<void> {
     const inputHandler = new InputHandler();
     const results: ReplayResult[] = [];
-    const enabledCases = testCases.filter(c => c.enabled);
 
-    this.log('info', `${enabledCases.length}件のテストケースを実行します`);
+    this.log('info', `${items.length}件のテストケースを実行します`);
 
-    for (const testCase of enabledCases) {
+    for (const { session, testCase } of items) {
       const startTime = Date.now();
       const screenshotDir = path.resolve('data/screenshots', `${testCase.caseId}_${timestamp()}`);
       fs.mkdirSync(screenshotDir, { recursive: true });
