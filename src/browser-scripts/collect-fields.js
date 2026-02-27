@@ -113,12 +113,15 @@
 
   // ========== フィールド収集 ==========
 
-  const textTypes = ['text', 'email', 'password', 'number', 'date', 'tel', 'url', 'search'];
+  const textTypes = ['text', 'email', 'password', 'number', 'date', 'tel', 'url', 'search', 'datetime-local', 'time', 'month', 'week'];
+  const specialTypes = ['range', 'color'];  // 特殊入力タイプ（そのまま保持）
   document.querySelectorAll('input').forEach(el => {
     const type = (el.type || 'text').toLowerCase();
     if (['hidden','submit','button','reset','image','radio','checkbox','file'].includes(type)) return;
     const stateInfo = getFieldState(el);
-    fields.push({ selector: buildSelector(el), type: textTypes.includes(type) ? type : 'text', label: getLabel(el), name: el.name, elementId: el.id, value: el.value, ...stateInfo });
+    // range/colorはそのまま保持、textTypesはそのまま、それ以外はtext
+    const resolvedType = specialTypes.includes(type) ? type : (textTypes.includes(type) ? type : 'text');
+    fields.push({ selector: buildSelector(el), type: resolvedType, label: getLabel(el), name: el.name, elementId: el.id, value: el.value, ...stateInfo });
   });
 
   document.querySelectorAll('textarea').forEach(el => {

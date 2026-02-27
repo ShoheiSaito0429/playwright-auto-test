@@ -55,6 +55,9 @@
         window.__lastClickedSubmit = { selector, text, timestamp: Date.now() };
         // ①対応: console.logでNode.js側に事前通知（ページ遷移後も情報が残る）
         console.log('__SUBMIT_CLICK__' + JSON.stringify({ selector, text }));
+        // モーダル閉じなどナビゲーションが発生しない場合のフォールバック:
+        // 1秒後にDOMの変化を通知して autoCollect を再トリガーする
+        setTimeout(() => notify(), 1000);
         break;
       }
       el = el.parentElement;

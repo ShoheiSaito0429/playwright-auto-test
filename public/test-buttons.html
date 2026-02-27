@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>ボタン検出テスト</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 8px; }
+    .test-section h3 { margin-top: 0; color: #333; }
+    .btn { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    .btn-primary { background: #007bff; color: white; border: none; border-radius: 4px; }
+    .custom-btn { background: #28a745; color: white; padding: 10px 20px; display: inline-block; cursor: pointer; border-radius: 4px; }
+    input[type="text"], select { padding: 8px; margin: 5px; width: 200px; }
+    .hidden { display: none; }
+    .invisible { visibility: hidden; }
+  </style>
+</head>
+<body>
+  <h1>🧪 ボタン検出パターンテスト</h1>
+  <p>このページで録画して、どのボタンが検出されるか確認します</p>
+
+  <form id="testForm">
+    <!-- テスト入力フィールド -->
+    <div class="test-section">
+      <h3>📝 入力フィールド</h3>
+      <input type="text" id="name" name="name" placeholder="名前">
+      <input type="email" id="email" name="email" placeholder="メール">
+      <select id="age" name="age">
+        <option value="">年齢を選択</option>
+        <option value="20">20代</option>
+        <option value="30">30代</option>
+        <option value="40">40代</option>
+      </select>
+    </div>
+
+    <!-- パターン1: 標準submit -->
+    <div class="test-section">
+      <h3>1️⃣ 標準 submit ボタン</h3>
+      <button type="submit" class="btn btn-primary">送信する (button type=submit)</button>
+      <input type="submit" value="送信 (input type=submit)" class="btn">
+    </div>
+
+    <!-- パターン2: JavaScript href -->
+    <div class="test-section">
+      <h3>2️⃣ JavaScript href リンク</h3>
+      <a href="javascript:alert('clicked!')" class="btn btn-primary">次へ進む (javascript: href)</a>
+      <a href="javascript:void(0)" onclick="alert('onclick')" class="btn">確認する (javascript:void + onclick)</a>
+    </div>
+
+    <!-- パターン3: onclick属性 -->
+    <div class="test-section">
+      <h3>3️⃣ onclick 属性（div/span）</h3>
+      <div onclick="alert('div clicked')" class="custom-btn">次へ (div onclick)</div>
+      <span onclick="alert('span clicked')" class="custom-btn">送信 (span onclick)</span>
+    </div>
+
+    <!-- パターン4: role="button" -->
+    <div class="test-section">
+      <h3>4️⃣ ARIA role="button"</h3>
+      <div role="button" tabindex="0" class="custom-btn" onclick="alert('role button')">確認する (role=button)</div>
+    </div>
+
+    <!-- パターン5: 画像ボタン -->
+    <div class="test-section">
+      <h3>5️⃣ 画像ボタン</h3>
+      <input type="image" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='40'%3E%3Crect fill='%23007bff' width='100' height='40' rx='4'/%3E%3Ctext x='50' y='25' text-anchor='middle' fill='white' font-size='14'%3E次へ%3C/text%3E%3C/svg%3E" alt="次へ">
+    </div>
+
+    <!-- パターン6: テキストのみマッチ -->
+    <div class="test-section">
+      <h3>6️⃣ テキストマッチのみ（クラスなし）</h3>
+      <button type="button" onclick="alert('plain button')">診断スタート</button>
+      <a href="#" onclick="alert('plain link'); return false;">申込みへ進む</a>
+    </div>
+
+    <!-- パターン7: 隠しボタン（検出されないべき） -->
+    <div class="test-section">
+      <h3>7️⃣ 非表示ボタン（検出されないべき）</h3>
+      <button type="submit" class="hidden">隠しボタン (display:none)</button>
+      <button type="submit" class="invisible">透明ボタン (visibility:hidden)</button>
+      <button type="submit" disabled>無効ボタン (disabled)</button>
+    </div>
+  </form>
+
+  <script>
+    document.getElementById('testForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      alert('フォーム送信されました！');
+    });
+  </script>
+</body>
+</html>

@@ -13,7 +13,14 @@ export class InputHandler {
     switch (field.type) {
       case 'text': case 'textarea': case 'password':
       case 'email': case 'number': case 'date': case 'tel': case 'url':
+      case 'datetime-local': case 'time': case 'month': case 'week':
         await this.fillText(page, field.selector, field.value);
+        break;
+      case 'range':
+        await this.setRange(page, field.selector, field.value);
+        break;
+      case 'color':
+        await this.setColor(page, field.selector, field.value);
         break;
       case 'radio':
         await this.selectRadio(page, field.selector, field.value);
@@ -179,6 +186,32 @@ export class InputHandler {
   private async uploadFile(page: Page, selector: string, filePath: string): Promise<void> {
     const el = page.locator(selector).first();
     await el.setInputFiles(path.resolve(filePath));
+  }
+
+  private async setRange(page: Page, selector: string, value: string): Promise<void> {
+    const count = await this.waitForCount(page, selector);
+    if (count === 0) throw new Error(`element not found: ${selector}`);
+
+    await page.evaluate(({ sel, val }) => {
+      const el = document.querySelector(sel) as HTMLInputElement | null;
+      if (!el) return;
+      el.value = val;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, { sel: selector, val: value });
+  }
+
+  private async setColor(page: Page, selector: string, value: string): Promise<void> {
+    const count = await this.waitForCount(page, selector);
+    if (count === 0) throw new Error(`element not found: ${selector}`);
+
+    await page.evaluate(({ sel, val }) => {
+      const el = document.querySelector(sel) as HTMLInputElement | null;
+      if (!el) return;
+      el.value = val;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, { sel: selector, val: value });
   }
 
   /**

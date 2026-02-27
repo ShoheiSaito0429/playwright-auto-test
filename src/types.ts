@@ -29,12 +29,19 @@ export interface RecordedField {
   ariaDisabled?: boolean;
 }
 
+export interface PreClick {
+  selector: string;
+  text: string;
+}
+
 export interface RecordedPage {
   id: string;
   url: string;
   title: string;
   stepNumber: number;
   fields: RecordedField[];
+  /** ナビゲーション前の事前クリック（モーダル閉じなど） */
+  preClicks?: PreClick[];
   submitSelector?: string;
   submitText?: string;
   recordedAt: string;
@@ -98,6 +105,7 @@ export type WSMessage =
   | { type: 'recording:capture' }
   | { type: 'recording:detect-submit'; payload: { pageId: string } }
   | { type: 'recording:page-collected'; payload: RecordedPage }
+  | { type: 'recording:submit-detected'; payload: { pageId: string; submitSelector: string; submitText: string } }
   | { type: 'recording:status'; payload: { status: string; url?: string; step?: number } }
   | { type: 'recording:complete'; payload: RecordingSession }
   | { type: 'recording:error'; payload: { message: string } }
