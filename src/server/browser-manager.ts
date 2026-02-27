@@ -634,6 +634,47 @@ export class BrowserManager {
         // stepNumber順にソートして実行
         const sortedInputs = [...testCase.pageInputs].sort((a, b) => a.stepNumber - b.stepNumber);
 
+        // ---- セットアップpreClicks ----
+        // テストケースに含まれていないセッションページのpreClicksを
+        // 最初のステップのURLに対して先に実行する（モーダル閉じなど状態設定）
+        const executePreClick = async (preClick: { selector: string; text: string }) => {
+          try {
+            this.log('info', `[${testCase.caseId}] 🖱️ preClick: ${preClick.selector} "${preClick.text}"`);
+            const clicked = await page.evaluate((sel: string) => {
+              const el = document.querySelector(sel);
+              if (el) { (el as HTMLElement).click(); return true; }
+              return false;
+            }, preClick.selector).catch(() => false);
+            if (!clicked) {
+              await page.locator(preClick.selector).first().click({ force: true, timeout: 3000 }).catch(() => {});
+            }
+            await page.waitForTimeout(800);
+            await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
+          } catch (e: any) {
+            this.log('warn', `[${testCase.caseId}] ⚠️ preClickエラー: ${preClick.selector} - ${e.message}`);
+          }
+        };
+
+        if (sortedInputs.length > 0) {
+          const firstSessionPage = session.pages.find(p => p.stepNumber === sortedInputs[0].stepNumber);
+          const firstUrl = firstSessionPage?.url;
+          if (firstUrl) {
+            const testStepNums = new Set(testCase.pageInputs.map(p => p.stepNumber));
+            // テストケースに未含有 & 同URL & preClicks有り のセッションページをstep順に実行
+            const setupPages = session.pages
+              .filter(p => p.url === firstUrl && !testStepNums.has(p.stepNumber) && (p.preClicks?.length ?? 0) > 0)
+              .sort((a, b) => a.stepNumber - b.stepNumber);
+            if (setupPages.length > 0) {
+              this.log('info', `[${testCase.caseId}] 🔧 セットアップpreClicks: ${setupPages.flatMap(p => p.preClicks ?? []).length}件（${setupPages.length}ステップ分）`);
+              for (const sp of setupPages) {
+                for (const pc of (sp.preClicks ?? [])) {
+                  await executePreClick(pc);
+                }
+              }
+            }
+          }
+        }
+
         // 全ステップを順番に実行（ログイン画面も含む）
         for (let i = 0; i < sortedInputs.length; i++) {
           const pageInput = sortedInputs[i];
@@ -654,23 +695,7 @@ export class BrowserManager {
           if (preClicks && preClicks.length > 0) {
             this.log('info', `[${testCase.caseId}] 🖱️ preClicks実行: ${preClicks.length}件`);
             for (const preClick of preClicks) {
-              try {
-                this.log('info', `[${testCase.caseId}] 🖱️ preClick: ${preClick.selector} "${preClick.text}"`);
-                // JS直接クリック（modalオーバーレイに阻まれないよう）
-                const clicked = await page.evaluate((sel) => {
-                  const el = document.querySelector(sel);
-                  if (el) { (el as HTMLElement).click(); return true; }
-                  return false;
-                }, preClick.selector).catch(() => false);
-                if (!clicked) {
-                  // フォールバック: force click
-                  await page.locator(preClick.selector).first().click({ force: true, timeout: 3000 }).catch(() => {});
-                }
-                await page.waitForTimeout(800);
-                await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
-              } catch (e: any) {
-                this.log('warn', `[${testCase.caseId}] ⚠️ preClickエラー: ${preClick.selector} - ${e.message}`);
-              }
+              await executePreClick(preClick);
             }
           }
 
