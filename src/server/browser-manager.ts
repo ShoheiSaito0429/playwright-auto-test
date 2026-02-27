@@ -74,6 +74,49 @@ export class BrowserManager {
     this.context = await this.browser.newContext({
       viewport: this.settings.browser.viewport,
     });
+
+    // ページロード前からクリックリスナーを注入（モーダル等の早期クリックも取り逃さない）
+    // ※ 通常のfunction宣言を使用してesbuildの__name注入を回避
+    await this.context.addInitScript(`(function() {
+      function buildClickSelector(el) {
+        if (el.id) return '#' + el.id;
+        var tag = (el.tagName || '').toLowerCase();
+        if (el.className && typeof el.className === 'string') {
+          var cls = el.className.trim().split(/\\s+/).filter(function(c){ return c; })[0];
+          if (cls) return tag + '.' + cls;
+        }
+        if (el.getAttribute && el.getAttribute('name')) return tag + '[name="' + el.getAttribute('name') + '"]';
+        var text = (el.textContent || '').trim().substring(0, 20);
+        return text ? tag + ':has-text("' + text + '")' : tag;
+      }
+      function isClickableBtn(el) {
+        if (!el || !el.tagName) return false;
+        var tag = el.tagName.toLowerCase();
+        if (tag === 'button' && el.type !== 'button') return true;
+        if (tag === 'input' && (el.type === 'submit' || el.type === 'image')) return true;
+        if (tag === 'a' && el.href && el.href.indexOf('javascript:') === 0) return true;
+        if (el.getAttribute && el.getAttribute('role') === 'button') return true;
+        if (el.classList && (el.classList.contains('nextBtn') || el.classList.contains('nextBtn2'))) return true;
+        var text = (el.textContent || '').toLowerCase();
+        return /次へ|進む|送信|確認|完了|登録|スタート|開始|診断|申込|submit|next|confirm|start/.test(text);
+      }
+      document.addEventListener('click', function(e) {
+        var el = e.target;
+        for (var i = 0; i < 5 && el; i++) {
+          if (isClickableBtn(el)) {
+            var info = { selector: buildClickSelector(el), text: (el.textContent || '').trim().substring(0, 30) };
+            window.__lastClickedSubmit = info;
+            console.log('__SUBMIT_CLICK__' + JSON.stringify(info));
+            setTimeout(function() {
+              if (typeof window.__fieldWatcherCallback === 'function') window.__fieldWatcherCallback();
+            }, 1000);
+            break;
+          }
+          el = el.parentElement;
+        }
+      }, true);
+    })()`);
+
     this.page = await this.context.newPage();
     this.recording = true;
     this.stepCounter = 0;
@@ -258,6 +301,13 @@ export class BrowserManager {
         fields,
         recordedAt: new Date().toISOString(),
       };
+
+      // Case 3: 最初のページでモーダルボタンクリックが先に発生していた場合
+      // lastPageが存在しないためsubmitSelectorに使われなかったclickedSubmitをpreClicksとして保存
+      if (clickedSubmit && this.session.pages.length === 0) {
+        recordedPage.preClicks = [{ selector: clickedSubmit.selector, text: clickedSubmit.text }];
+        this.log('info', `🖱️ 初回ページのpreClickを記録: ${clickedSubmit.selector} "${clickedSubmit.text}"`);
+      }
 
       // 送信ボタン検出（javascript:リンク対応強化）
       const submitInfo = await this.page.evaluate(() => {
