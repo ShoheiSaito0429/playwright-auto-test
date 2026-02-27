@@ -42,6 +42,8 @@ export class BrowserManager {
   private recording = false;
   private session: RecordingSession | null = null;
   private stepCounter = 0;
+  // ページ遷移前にconsole経由で受け取ったボタンクリック情報（①対応）
+  private _pendingClickedSubmit: { selector: string; text: string } | null = null;
 
   constructor(settings: Settings, send: SendFn) {
     this.settings = settings;
@@ -85,6 +87,19 @@ export class BrowserManager {
       completedAt: '',
     };
 
+    // ①対応: console.log経由でボタンクリックをページ遷移前に捕捉
+    this.page.on('console', (msg) => {
+      if (!this.recording) return;
+      const text = msg.text();
+      if (text.startsWith('__SUBMIT_CLICK__')) {
+        try {
+          const data = JSON.parse(text.slice('__SUBMIT_CLICK__'.length));
+          this._pendingClickedSubmit = data;
+          this.log('info', `🖱️ ボタンクリック事前検知: ${data.selector} "${data.text}"`);
+        } catch {}
+      }
+    });
+
     // ページ遷移・読み込み完了時にフィールドを自動収集
     this.page.on('load', async () => {
       if (!this.recording || !this.page) return;
@@ -126,15 +141,20 @@ export class BrowserManager {
     const capturedUrl = this.page.url();
 
     try {
-      // クリックされたボタン情報を取得（ページ遷移前に記録されたもの）
-      let clickedSubmit: { selector: string; text: string } | null = null;
-      try {
-        clickedSubmit = await this.page.evaluate(() => {
-          const info = (window as any).__lastClickedSubmit;
-          (window as any).__lastClickedSubmit = null; // クリア
-          return info || null;
-        });
-      } catch { /* ページ遷移中は無視 */ }
+      // クリックされたボタン情報を取得
+      // ①優先: console.log経由で事前に受け取った情報（ページ遷移後でも残る）
+      // ②フォールバック: ページのwindow変数から取得（同一ページ内遷移用）
+      let clickedSubmit: { selector: string; text: string } | null = this._pendingClickedSubmit;
+      this._pendingClickedSubmit = null;
+      if (!clickedSubmit) {
+        try {
+          clickedSubmit = await this.page.evaluate(() => {
+            const info = (window as any).__lastClickedSubmit;
+            (window as any).__lastClickedSubmit = null;
+            return info || null;
+          });
+        } catch { /* ページ遷移中は無視 */ }
+      }
 
       // 前のページの submitSelector を更新
       if (clickedSubmit && this.session.pages.length > 0) {

@@ -182,17 +182,27 @@
         </div>
         <div class="btn-group">
           <button class="btn btn-primary" id="btnStartRecord" onclick="startRecording()">▶️ 記録開始</button>
-          <button class="btn btn-outline" id="btnManualCollect" onclick="manualCollect()" disabled>🔍 手動収集</button>
           <button class="btn btn-danger" id="btnStopRecord" onclick="stopRecording()" disabled>⏹ 記録停止・保存</button>
         </div>
       </div>
       
       <!-- ブラウザ状態 -->
       <div class="card" id="browserStatus" style="display:none;">
-        <h2>🌐 ブラウザ状態</h2>
-        <div style="font-size: 13px; color: var(--text2);">
-          <div>URL: <span id="currentUrl" style="color: var(--text);">-</span></div>
-          <div>タイトル: <span id="currentTitle" style="color: var(--text);">-</span></div>
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
+          <div>
+            <h2 style="margin:0 0 8px;">🌐 ブラウザ状態</h2>
+            <div style="font-size: 13px; color: var(--text2);">
+              <div>URL: <span id="currentUrl" style="color: var(--text);">-</span></div>
+              <div>タイトル: <span id="currentTitle" style="color: var(--text);">-</span></div>
+            </div>
+          </div>
+          <!-- ② フィールド再取得ボタン -->
+          <button id="btnManualCollect" onclick="manualCollect()" disabled
+            style="flex-shrink:0; padding: 10px 14px; border-radius: 8px; border: 2px solid var(--primary);
+            background: color-mix(in srgb, var(--primary) 10%, var(--surface2));
+            cursor: pointer; font-size: 13px; font-weight: 600; color: var(--primary);">
+            🔄 フィールドを<br>再取得
+          </button>
         </div>
       </div>
       

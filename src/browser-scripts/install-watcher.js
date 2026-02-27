@@ -1,5 +1,5 @@
 /**
- * MutationObserver 注入スクリプト
+ * MutationObserver + クリック監視 注入スクリプト
  * 純粋なJS（esbuildの__name注入を回避）
  */
 (() => {
@@ -16,6 +16,50 @@
       }
     }, 800);
   };
+
+  // クリックされたボタンを記録（送信ボタン検出用）
+  const buildSelector = (el) => {
+    if (!el) return '';
+    if (el.id) return `#${el.id}`;
+    const tag = el.tagName.toLowerCase();
+    if (el.className && typeof el.className === 'string') {
+      const cls = el.className.trim().split(/\s+/)[0];
+      if (cls) return `${tag}.${cls}`;
+    }
+    if (el.getAttribute('name')) return `${tag}[name="${el.getAttribute('name')}"]`;
+    const text = el.textContent?.trim().substring(0, 20) || '';
+    if (text) return `${tag}:has-text("${text}")`;
+    return tag;
+  };
+
+  const isSubmitButton = (el) => {
+    if (!el) return false;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'button' && el.type !== 'button') return true;
+    if (tag === 'input' && ['submit', 'image'].includes(el.type)) return true;
+    if (tag === 'a' && el.href?.startsWith('javascript:')) return true;
+    if (el.getAttribute('role') === 'button') return true;
+    if (el.classList?.contains('nextBtn') || el.classList?.contains('nextBtn2')) return true;
+    // テキストパターン
+    const text = (el.textContent || '').toLowerCase();
+    return /次へ|進む|送信|確認|完了|登録|スタート|開始|診断|申込|submit|next|confirm|start/.test(text);
+  };
+
+  document.addEventListener('click', (e) => {
+    let el = e.target;
+    // 親要素をたどってボタンを探す
+    for (let i = 0; i < 5 && el; i++) {
+      if (isSubmitButton(el)) {
+        const selector = buildSelector(el);
+        const text = el.textContent?.trim().substring(0, 30) || '';
+        window.__lastClickedSubmit = { selector, text, timestamp: Date.now() };
+        // ①対応: console.logでNode.js側に事前通知（ページ遷移後も情報が残る）
+        console.log('__SUBMIT_CLICK__' + JSON.stringify({ selector, text }));
+        break;
+      }
+      el = el.parentElement;
+    }
+  }, true);
 
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
