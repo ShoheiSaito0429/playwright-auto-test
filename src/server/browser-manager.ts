@@ -342,6 +342,44 @@ export class BrowserManager {
     return this.session;
   }
 
+  // ===== スクリーンショットヘルパー =====
+  // fullPage: true を試みてタイムアウトしたらフォールバック。ログも出す。
+  private async takeScreenshot(
+    page: import('playwright').Page,
+    filePath: string,
+    label: string,
+    screenshots: string[],
+  ): Promise<void> {
+    const name = filePath.split(/[\\/]/).pop() ?? filePath;
+    this.log('info', `📸 撮影中 [${label}]: ${name}`);
+    try {
+      // フォント読み込みを最大3秒待つ（タイムアウトしても続行）
+      await page.evaluate(() =>
+        Promise.race([
+          (document as any).fonts?.ready ?? Promise.resolve(),
+          new Promise(r => setTimeout(r, 3000)),
+        ])
+      ).catch(() => {});
+
+      // fullPage: true でフル画面取得（15秒以内）
+      await page.screenshot({ path: filePath, fullPage: true, timeout: 15000 });
+      const size = (() => { try { return require('fs').statSync(filePath).size; } catch { return 0; } })();
+      this.log('info', `📸 ✅ 完了 [${label}]: ${name} (${Math.round(size / 1024)}KB)`);
+      screenshots.push(filePath.replace(/\\/g, '/'));
+    } catch (err: any) {
+      // フォールバック: viewport のみ（高速・確実）
+      this.log('warn', `📸 ⚠️ フルページ失敗 → viewport撮影にフォールバック [${label}]: ${err.message}`);
+      try {
+        await page.screenshot({ path: filePath, fullPage: false, timeout: 8000 });
+        const size = (() => { try { return require('fs').statSync(filePath).size; } catch { return 0; } })();
+        this.log('info', `📸 ✅ 完了（viewport）[${label}]: ${name} (${Math.round(size / 1024)}KB)`);
+        screenshots.push(filePath.replace(/\\/g, '/'));
+      } catch (e2: any) {
+        this.log('warn', `📸 ❌ スクリーンショット失敗 [${label}]: ${e2.message}`);
+      }
+    }
+  }
+
   // ===== 再生モード =====
   // ログイン画面もステップ1として扱う。全画面同じロジックで入力→送信を繰り返す。
 
@@ -417,14 +455,9 @@ export class BrowserManager {
             },
           });
 
-          // 入力前キャプチャ（タイムアウト30秒、失敗しても続行）
+          // 入力前キャプチャ
           const beforePath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_before.png`);
-          try {
-            await page.screenshot({ path: beforePath, fullPage: false, timeout: 10000 });
-            screenshots.push(beforePath.replace(/\\/g, '/'));
-          } catch (ssErr: any) {
-            this.log('warn', `[${testCase.caseId}] ⚠️ スクリーンショット取得失敗（続行）: ${ssErr.message}`);
-          }
+          await this.takeScreenshot(page, beforePath, `${testCase.caseId} step${pageInput.stepNumber} before`, screenshots);
 
           // 入力
           const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
@@ -464,18 +497,12 @@ export class BrowserManager {
             }
           }
 
-          // 入力後キャプチャ（タイムアウト30秒、失敗しても続行）
-          // スクリーンショット前に待機（CSSアニメーション/トランジション完了待ち）
+          // 入力後キャプチャ（CSSアニメーション/トランジション完了待ち）
           const screenshotDelay = this.settings.timeout?.screenshotDelay ?? 500;
           await page.waitForTimeout(screenshotDelay);
-          
+
           const afterPath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_after.png`);
-          try {
-            await page.screenshot({ path: afterPath, fullPage: false, timeout: 10000 });
-            screenshots.push(afterPath.replace(/\\/g, '/'));
-          } catch (ssErr: any) {
-            this.log('warn', `[${testCase.caseId}] ⚠️ スクリーンショット取得失敗（続行）: ${ssErr.message}`);
-          }
+          await this.takeScreenshot(page, afterPath, `${testCase.caseId} step${pageInput.stepNumber} after`, screenshots);
 
           // 送信ボタンクリック → 次画面へ遷移
           let submitSelector = pageInput.submitSelector || sessionPage?.submitSelector;
@@ -716,12 +743,9 @@ export class BrowserManager {
                   this.log('info', `[${testCase.caseId}] ✅ ページ内容の変化を確認 (SPA遷移)`);
                 } else {
                   this.log('warn', `[${testCase.caseId}] ⚠️ ページ遷移が検出されませんでした（入力不足の可能性）`);
-                  // スクリーンショットを追加保存（タイムアウト30秒、失敗しても続行）
+                  // スタック時スクリーンショット
                   const stuckPath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_stuck.png`);
-                  try {
-                    await page.screenshot({ path: stuckPath, fullPage: false, timeout: 10000 });
-                    screenshots.push(stuckPath.replace(/\\/g, '/'));
-                  } catch { /* ignore */ }
+                  await this.takeScreenshot(page, stuckPath, `${testCase.caseId} step${pageInput.stepNumber} stuck`, screenshots);
                 }
               }
             } catch (err: any) {
@@ -730,16 +754,12 @@ export class BrowserManager {
           }
         }
 
-        // 最終画面キャプチャ（タイムアウト10秒に短縮、失敗しても続行）
-        // ※ fullPageはフォント読み込みで長時間ブロックされる場合があるためviewportのみ
+        // 最終画面キャプチャ
         const finalScreenshotDelay = this.settings.timeout?.screenshotDelay ?? 500;
         await page.waitForTimeout(finalScreenshotDelay);
-        
+
         const finalPath = path.join(screenshotDir, 'final.png');
-        try {
-          await page.screenshot({ path: finalPath, fullPage: false, timeout: 10000 });
-          screenshots.push(finalPath.replace(/\\/g, '/'));
-        } catch { /* ignore */ }
+        await this.takeScreenshot(page, finalPath, `${testCase.caseId} final`, screenshots);
 
         results.push({
           caseId: testCase.caseId,
