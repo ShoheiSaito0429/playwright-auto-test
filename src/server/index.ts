@@ -11,6 +11,10 @@ import type { Settings, WSMessage, RecordedPage, TestCase, RecordingSession } fr
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3200;
 
+// バージョン情報
+const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'));
+const VERSION = packageJson.version;
+
 // ===== 設定読み込み =====
 const CONFIG_PATH = path.resolve('config/settings.json');
 const defaultSettings: Settings = {
@@ -39,6 +43,11 @@ app.use(express.static(path.resolve(__dirname, '../../public')));
 
 // スクリーンショット画像の配信
 app.use('/screenshots', express.static(path.resolve('data/screenshots')));
+
+// バージョンAPI
+app.get('/api/version', (_req, res) => {
+  res.json({ version: VERSION, buildDate: VERSION.split('-')[1] || 'unknown' });
+});
 
 // ログファイル一覧・ダウンロード
 app.get('/api/logs', (_req, res) => {
@@ -349,7 +358,10 @@ wss.on('connection', (ws: WebSocket) => {
           const caseFiles = fs.readdirSync(caseDir).filter(f => f.endsWith('.json'));
           for (const f of caseFiles) {
             const data = JSON.parse(fs.readFileSync(path.join(caseDir, f), 'utf-8'));
-            if (data.cases) allCases = [...allCases, ...data.cases];
+            // セッション名が一致するファイルのみ読み込む（全ファイルをマージすると複数ケースが混在するバグを防ぐ）
+            if (data.cases && (data.sessionName === session.name || f === `${session.name}.json`)) {
+              allCases = [...allCases, ...data.cases];
+            }
           }
 
           const targetCases = caseIds.length > 0
@@ -377,6 +389,7 @@ server.listen(PORT, () => {
   console.log('╔════════════════════════════════════════════════╗');
   console.log('║   🚀 Playwright Auto Test - GUI サーバー起動    ║');
   console.log('╠════════════════════════════════════════════════╣');
+  console.log(`║   Version: ${VERSION.padEnd(35)}║`);
   console.log(`║   URL: http://localhost:${PORT}                  ║`);
   console.log('║                                                ║');
   console.log('║   ブラウザで上記URLを開いてください              ║');
