@@ -229,18 +229,23 @@ export class BrowserManager {
         } catch { /* ページ遷移中は無視 */ }
       }
 
-      // 前のページの submitSelector を更新
-      // ユーザーの実クリックは常に優先（自動検出より確実なため）
-      if (clickedSubmit && this.session.pages.length > 0) {
-        const lastPage = this.session.pages[this.session.pages.length - 1];
-        lastPage.submitSelector = clickedSubmit.selector;
-        lastPage.submitText = clickedSubmit.text;
-        this.log('info', `🎯 クリックされたボタンを記録: ${clickedSubmit.selector} "${clickedSubmit.text}"`);
-        // クライアントに更新を通知
-        this.send({
-          type: 'recording:submit-detected',
-          payload: { pageId: lastPage.id, submitSelector: clickedSubmit.selector, submitText: clickedSubmit.text },
-        });
+      // クリックの分類: 同じURLならpreClick、異なるURL(ナビゲーション)ならsubmitSelector
+      const prevPage = this.session.pages.length > 0
+        ? this.session.pages[this.session.pages.length - 1]
+        : null;
+      if (clickedSubmit && prevPage) {
+        if (prevPage.url !== capturedUrl) {
+          // ナビゲーション後 → 前ページのsubmitSelectorとして記録
+          prevPage.submitSelector = clickedSubmit.selector;
+          prevPage.submitText = clickedSubmit.text;
+          this.log('info', `🎯 submitSelector記録: ${clickedSubmit.selector} "${clickedSubmit.text}"`);
+          this.send({
+            type: 'recording:submit-detected',
+            payload: { pageId: prevPage.id, submitSelector: clickedSubmit.selector, submitText: clickedSubmit.text },
+          });
+          clickedSubmit = null; // 処理済みとしてクリア
+        }
+        // 同じURLの場合はURLdedup処理で preClicks に追加するので、ここでは何もしない
       }
 
       await this.page.waitForLoadState('domcontentloaded');
@@ -651,9 +656,17 @@ export class BrowserManager {
             for (const preClick of preClicks) {
               try {
                 this.log('info', `[${testCase.caseId}] 🖱️ preClick: ${preClick.selector} "${preClick.text}"`);
-                const el = page.locator(preClick.selector).first();
-                await el.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-                await el.click({ timeout: 5000 });
+                // JS直接クリック（modalオーバーレイに阻まれないよう）
+                const clicked = await page.evaluate((sel) => {
+                  const el = document.querySelector(sel);
+                  if (el) { (el as HTMLElement).click(); return true; }
+                  return false;
+                }, preClick.selector).catch(() => false);
+                if (!clicked) {
+                  // フォールバック: force click
+                  await page.locator(preClick.selector).first().click({ force: true, timeout: 3000 }).catch(() => {});
+                }
+                await page.waitForTimeout(800);
                 await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
               } catch (e: any) {
                 this.log('warn', `[${testCase.caseId}] ⚠️ preClickエラー: ${preClick.selector} - ${e.message}`);
