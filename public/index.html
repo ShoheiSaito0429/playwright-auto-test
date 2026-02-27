@@ -519,31 +519,62 @@ function manualCollect() {
   sendWS({ type: 'recording:capture' });
 }
 
+function tsNow() {
+  const d = new Date();
+  return d.getFullYear().toString()
+    + String(d.getMonth() + 1).padStart(2, '0')
+    + String(d.getDate()).padStart(2, '0')
+    + String(d.getHours()).padStart(2, '0')
+    + String(d.getMinutes()).padStart(2, '0')
+    + String(d.getSeconds()).padStart(2, '0');
+}
+
 async function stopRecording() {
-  const sessionName = `recording_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
+  // 最後のページが存在する場合は確認モーダルを表示
+  if (collectedPages.length > 0) {
+    const last = collectedPages[collectedPages.length - 1];
+    document.getElementById('stopModalUrl').textContent = last.url || '-';
+    document.getElementById('stopModalTitle').textContent = last.title || '-';
+    document.getElementById('stopModalFields').textContent = `${(last.fields || []).length}個のフィールド`;
+    document.getElementById('stopConfirmModal').style.display = 'flex';
+    return; // モーダルのボタンから doStopRecording() を呼ぶ
+  }
+  await doStopRecording(true);
+}
+
+async function doStopRecording(keepLastPage) {
+  document.getElementById('stopConfirmModal').style.display = 'none';
+
+  let pages = [...collectedPages];
+  if (!keepLastPage && pages.length > 0) {
+    const removed = pages.pop();
+    addLog('info', `🗑️ 最後のページを削除: ${removed.url}`);
+  }
+
+  const d = new Date();
+  const sessionName = `recording_${tsNow()}`;
   const session = {
     id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
     name: sessionName,
     startUrl: document.getElementById('recordUrl').value,
-    pages: collectedPages,
+    pages,
     startedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
   };
-  
+
   await fetch(`/api/recordings/${sessionName}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(session),
   });
-  
+
   sendWS({ type: 'recording:stop' });
   isRecording = false;
   currentSession = session;
   updateRecordingUI();
   addLog('info', '✅ 記録を保存しました');
-  
-  // テストケースの自動生成を提案
-  if (collectedPages.length > 0) {
+
+  if (session.pages.length > 0) {
     autoGenerateTestCase(session);
   }
 }
@@ -1310,5 +1341,50 @@ function toggleAutoRefresh(enabled) {
   if (enabled) logAutoRefreshTimer = setInterval(loadLogFile, 5000);
 }
 </script>
+
+<!-- ===== 停止確認モーダル ===== -->
+<div id="stopConfirmModal" style="
+  display: none; position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.5); align-items: center; justify-content: center;">
+  <div style="
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 28px; max-width: 480px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+
+    <h3 style="margin: 0 0 8px; font-size: 16px;">⏹ 記録停止の確認</h3>
+    <p style="font-size: 13px; color: var(--text2); margin: 0 0 16px;">
+      直前の画面の要素を保存しますか？
+    </p>
+
+    <!-- 最後のページ情報 -->
+    <div style="
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px; font-size: 12px; margin-bottom: 20px;">
+      <div style="color: var(--text2); margin-bottom: 4px;">最後のページ</div>
+      <div style="font-weight: 600; word-break: break-all; margin-bottom: 4px;" id="stopModalUrl">-</div>
+      <div style="color: var(--text2);" id="stopModalTitle">-</div>
+      <div style="color: var(--primary); margin-top: 6px;" id="stopModalFields">-</div>
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+      <button onclick="doStopRecording(true)" style="
+        flex: 1; padding: 12px; border-radius: 8px; border: none; cursor: pointer;
+        background: var(--success, #22c55e); color: #fff; font-size: 14px; font-weight: 600;">
+        ✅ 保存して終了
+      </button>
+      <button onclick="doStopRecording(false)" style="
+        flex: 1; padding: 12px; border-radius: 8px; border: none; cursor: pointer;
+        background: var(--danger, #ef4444); color: #fff; font-size: 14px; font-weight: 600;">
+        🗑️ 削除して終了
+      </button>
+    </div>
+    <button onclick="document.getElementById('stopConfirmModal').style.display='none'" style="
+      width: 100%; margin-top: 10px; padding: 8px; border-radius: 8px;
+      border: 1px solid var(--border); background: transparent; cursor: pointer;
+      font-size: 13px; color: var(--text2);">
+      キャンセル
+    </button>
+  </div>
+</div>
+
 </body>
 </html>
