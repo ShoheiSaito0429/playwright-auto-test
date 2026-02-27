@@ -352,15 +352,22 @@ wss.on('connection', (ws: WebSocket) => {
             break;
           }
 
-          // テストケースを読み込み
+          // テストケースを読み込み（セッション名と同名のファイルだけを直接読む）
           const caseDir = path.resolve('data/testcases');
           let allCases: TestCase[] = [];
-          const caseFiles = fs.readdirSync(caseDir).filter(f => f.endsWith('.json'));
-          for (const f of caseFiles) {
-            const data = JSON.parse(fs.readFileSync(path.join(caseDir, f), 'utf-8'));
-            // セッション名が一致するファイルのみ読み込む（全ファイルをマージすると複数ケースが混在するバグを防ぐ）
-            if (data.cases && (data.sessionName === session.name || f === `${session.name}.json`)) {
-              allCases = [...allCases, ...data.cases];
+          const caseFilePath = path.join(caseDir, `${session.name}.json`);
+          if (fs.existsSync(caseFilePath)) {
+            const data = JSON.parse(fs.readFileSync(caseFilePath, 'utf-8'));
+            if (data.cases) allCases = data.cases;
+          } else {
+            // フォールバック: sessionNameフィールドで検索（旧形式互換）
+            const caseFiles = fs.readdirSync(caseDir).filter(f => f.endsWith('.json'));
+            for (const f of caseFiles) {
+              const data = JSON.parse(fs.readFileSync(path.join(caseDir, f), 'utf-8'));
+              if (data.cases && data.sessionName === session.name) {
+                allCases = data.cases;
+                break;
+              }
             }
           }
 
