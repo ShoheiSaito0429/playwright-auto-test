@@ -273,8 +273,34 @@
     <div id="tab-settings" class="tab-content hidden">
       <div class="card">
         <h2>⚙️ ブラウザ設定</h2>
+
+        <!-- 🖥️ モード切り替え（Windows / Mac） -->
+        <div style="margin-bottom: 20px;">
+          <p style="font-size: 13px; color: var(--text2); margin-bottom: 10px;">実行環境に合わせてモードを選択してください。選択すると設定を自動保存します。</p>
+          <div style="display: flex; gap: 12px;">
+            <button id="modeWindows" onclick="applyMode('windows')" style="
+              flex: 1; padding: 14px 10px; border-radius: 10px; border: 2px solid var(--border);
+              background: var(--surface2); cursor: pointer; font-size: 14px; font-weight: 600;
+              display: flex; flex-direction: column; align-items: center; gap: 4px;
+              transition: all 0.15s;
+            ">
+              🖥️ Windows モード
+              <span style="font-size: 11px; font-weight: 400; color: var(--text2);">ブラウザ表示あり・操作を目で確認</span>
+            </button>
+            <button id="modeMac" onclick="applyMode('mac')" style="
+              flex: 1; padding: 14px 10px; border-radius: 10px; border: 2px solid var(--border);
+              background: var(--surface2); cursor: pointer; font-size: 14px; font-weight: 600;
+              display: flex; flex-direction: column; align-items: center; gap: 4px;
+              transition: all 0.15s;
+            ">
+              🍎 Mac / サーバーモード
+              <span style="font-size: 11px; font-weight: 400; color: var(--text2);">ブラウザ非表示・高速実行</span>
+            </button>
+          </div>
+        </div>
+
         <p style="color: var(--text2); font-size: 13px; margin-bottom: 16px;">
-          再生モードでのブラウザ動作を設定します。サイトURL・ログイン情報の事前設定は不要です。
+          細かい設定は以下から変更できます。
         </p>
         <div class="form-row-3">
           <div class="form-group">
@@ -1030,6 +1056,33 @@ function renderReplayResults(results) {
 }
 
 // ===== Settings =====
+async function applyMode(mode) {
+  const isWindows = mode === 'windows';
+  // フォームに反映
+  document.getElementById('settHeadless').value = isWindows ? 'false' : 'true';
+  document.getElementById('settSlowMo').value = isWindows ? '100' : '0';
+  // 保存
+  await saveSettings();
+  // ボタンのハイライトを更新
+  updateModeButtons();
+}
+
+function updateModeButtons() {
+  const isHeadless = document.getElementById('settHeadless').value === 'true';
+  const winBtn = document.getElementById('modeWindows');
+  const macBtn = document.getElementById('modeMac');
+  if (!winBtn || !macBtn) return;
+  // アクティブなボタンをハイライト
+  [winBtn, macBtn].forEach(btn => {
+    btn.style.borderColor = 'var(--border)';
+    btn.style.background = 'var(--surface2)';
+    btn.style.color = '';
+  });
+  const activeBtn = isHeadless ? macBtn : winBtn;
+  activeBtn.style.borderColor = 'var(--primary)';
+  activeBtn.style.background = 'color-mix(in srgb, var(--primary) 12%, var(--surface2))';
+}
+
 async function loadSettings() {
   const res = await fetch('/api/settings');
   settings = await res.json();
@@ -1039,6 +1092,7 @@ async function loadSettings() {
   document.getElementById('settFormat').value = settings.screenshot?.format || 'png';
   document.getElementById('settWidth').value = settings.browser?.viewport?.width ?? 1280;
   document.getElementById('settHeight').value = settings.browser?.viewport?.height ?? 900;
+  updateModeButtons();
 }
 
 async function saveSettings() {
