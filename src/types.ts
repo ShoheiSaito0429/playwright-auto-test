@@ -96,6 +96,7 @@ export type WSMessage =
   | { type: 'recording:start'; payload: { url: string } }
   | { type: 'recording:stop' }
   | { type: 'recording:capture' }
+  | { type: 'recording:detect-submit'; payload: { pageId: string } }
   | { type: 'recording:page-collected'; payload: RecordedPage }
   | { type: 'recording:status'; payload: { status: string; url?: string; step?: number } }
   | { type: 'recording:complete'; payload: RecordingSession }

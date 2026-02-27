@@ -352,6 +352,12 @@ wss.on('connection', (ws: WebSocket) => {
           await browserManager.manualCollect();
           break;
         }
+        case 'recording:detect-submit': {
+          const { pageId } = msg.payload;
+          const result = await browserManager.detectSubmitButton();
+          send({ type: 'recording:submit-detected', payload: { pageId, ...result } });
+          break;
+        }
         case 'recording:stop': {
           // GUIから完成されたページ情報と一緒にstopを呼ぶ
           // ページ情報はHTTP APIで別途保存される

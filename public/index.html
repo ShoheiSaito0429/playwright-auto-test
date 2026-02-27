@@ -655,11 +655,20 @@ function renderCollectedPages() {
             }).join('')}
           </tbody>
         </table>
-        ${page.submitSelector ? `
-          <div style="margin-top: 8px; font-size: 12px; color: var(--text2);">
-            送信ボタン: <code>${escHtml(page.submitSelector)}</code> "${escHtml(page.submitText || '')}"
-          </div>
-        ` : ''}
+        <!-- submitSelector 編集エリア -->
+        <div style="margin-top: 10px; padding: 8px 10px; background: var(--surface2); border-radius: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="font-size: 12px; color: var(--text2); flex-shrink:0;">🖱️ 送信ボタン:</span>
+          <input type="text"
+            id="submit-selector-${page.id}"
+            value="${escAttr(page.submitSelector || '')}"
+            placeholder="セレクタ未検出（例: a.nextBtn, #btn-next, input[type=submit]）"
+            oninput="updateSubmitSelector('${page.id}', this.value)"
+            style="flex:1; min-width: 200px; font-family: monospace; font-size: 12px; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface);">
+          <button onclick="detectSubmitSelector('${page.id}')"
+            style="flex-shrink:0; padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-size: 12px;">
+            🔍 自動検出
+          </button>
+        </div>
       </div>
     `;
   }
@@ -672,6 +681,17 @@ function updateFieldValue(pageId, fieldId, newValue) {
     const field = page.fields.find(f => f.id === fieldId);
     if (field) field.value = newValue;
   }
+}
+
+function updateSubmitSelector(pageId, selector) {
+  const page = collectedPages.find(p => p.id === pageId);
+  if (page) page.submitSelector = selector;
+}
+
+function detectSubmitSelector(pageId) {
+  // サーバー側に現在ページのボタン自動検出を依頼
+  addLog('info', '🔍 送信ボタンを自動検出中...');
+  sendWS({ type: 'recording:detect-submit', payload: { pageId } });
 }
 
 // ===== Test Cases =====
