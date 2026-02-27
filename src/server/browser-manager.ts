@@ -103,18 +103,48 @@ export class BrowserManager {
       type: 'recording:status',
       payload: { status: 'recording', url: this.page.url(), step: 0 },
     });
-    this.send({
-      type: 'browser:navigated',
-      payload: { url: this.page.url(), title: await this.page.title() },
-    });
+    if (!this.page.isClosed()) {
+      this.send({
+        type: 'browser:navigated',
+        payload: { url: this.page.url(), title: await this.page.title().catch(() => '') },
+      });
+    }
 
     this.log('info', '📹 記録開始 — ログイン画面を含めて全操作を手動で行ってください');
   }
 
   private async autoCollectFields(): Promise<void> {
-    if (!this.page || !this.recording) return;
+    if (!this.page || !this.recording || this.page.isClosed()) return;
+
+    // URLをasync処理前に即座に取得（遷移中に変わらないように）
+    const capturedUrl = this.page.url();
 
     try {
+      // クリックされたボタン情報を取得（ページ遷移前に記録されたもの）
+      let clickedSubmit: { selector: string; text: string } | null = null;
+      try {
+        clickedSubmit = await this.page.evaluate(() => {
+          const info = (window as any).__lastClickedSubmit;
+          (window as any).__lastClickedSubmit = null; // クリア
+          return info || null;
+        });
+      } catch { /* ページ遷移中は無視 */ }
+
+      // 前のページの submitSelector を更新
+      if (clickedSubmit && this.session.pages.length > 0) {
+        const lastPage = this.session.pages[this.session.pages.length - 1];
+        if (!lastPage.submitSelector) {
+          lastPage.submitSelector = clickedSubmit.selector;
+          lastPage.submitText = clickedSubmit.text;
+          this.log('info', `🎯 クリックされたボタンを記録: ${clickedSubmit.selector} "${clickedSubmit.text}"`);
+          // クライアントに更新を通知
+          this.send({
+            type: 'recording:submit-detected',
+            payload: { pageId: lastPage.id, submitSelector: clickedSubmit.selector, submitText: clickedSubmit.text },
+          });
+        }
+      }
+
       await this.page.waitForLoadState('domcontentloaded');
       
       // 動的フィールド対応: ページ読み込み後、追加の待機
@@ -127,8 +157,8 @@ export class BrowserManager {
       // さらに少し待って、遅延レンダリングに対応
       await new Promise(r => setTimeout(r, 500));
 
-      const url = this.page.url();
-      const title = await this.page.title();
+      const url = capturedUrl;
+      const title = await this.page.title().catch(() => '');
 
       this.send({
         type: 'browser:navigated',
@@ -146,13 +176,20 @@ export class BrowserManager {
       // 最初の収集
       let fields = await collectPageFields(this.page);
       
-      // フィールドが少ない場合、追加待機して再収集（動的フィールド対応）
-      if (fields.length < 3) {
-        await new Promise(r => setTimeout(r, 1500));
-        const retryFields = await collectPageFields(this.page);
-        if (retryFields.length > fields.length) {
-          this.log('info', `🔄 追加フィールドを検出: ${fields.length} → ${retryFields.length}`);
-          fields = retryFields;
+      // 常に追加待機して再収集（動的フィールド対応）
+      const retryDelay = this.settings.timeout?.fieldCollectRetryDelay ?? 2000;
+      await new Promise(r => setTimeout(r, retryDelay));
+      const retryFields = await collectPageFields(this.page);
+      if (retryFields.length > fields.length) {
+        this.log('info', `🔄 追加フィールドを検出: ${fields.length} → ${retryFields.length}`);
+        fields = retryFields;
+      } else if (retryFields.length === fields.length) {
+        // 同数でも内容が変わっている可能性があるのでマージ
+        const existingSelectors = new Set(fields.map(f => f.selector));
+        for (const f of retryFields) {
+          if (!existingSelectors.has(f.selector)) {
+            fields.push(f);
+          }
         }
       }
       
@@ -170,22 +207,79 @@ export class BrowserManager {
         recordedAt: new Date().toISOString(),
       };
 
-      // 送信ボタン検出
+      // 送信ボタン検出（javascript:リンク対応強化）
       const submitInfo = await this.page.evaluate(() => {
-        const candidates = [
-          ...Array.from(document.querySelectorAll('button[type="submit"]')),
-          ...Array.from(document.querySelectorAll('input[type="submit"]')),
-          ...Array.from(document.querySelectorAll('button')).filter(b =>
-            /次へ|送信|確認|完了|登録|保存|ログイン|サインイン|submit|next|confirm|save|login|sign.?in/i.test(b.textContent || '')
-          ),
+        // 日本語保険サイト対応のテキストパターン
+        const textPattern = /次へ|進む|送信|確認|完了|登録|保存|スタート|開始|診断|申込|見積|ログイン|サインイン|submit|next|confirm|save|start|login|sign.?in/i;
+        
+        const candidates: HTMLElement[] = [
+          // 1. type="submit" ボタン
+          ...Array.from(document.querySelectorAll('button[type="submit"]')) as HTMLElement[],
+          ...Array.from(document.querySelectorAll('input[type="submit"]')) as HTMLElement[],
+          // 2. input[type="image"] 画像ボタン
+          ...Array.from(document.querySelectorAll('input[type="image"]')) as HTMLElement[],
+          // 3. javascript: リンク（全労済などで使用）
+          ...Array.from(document.querySelectorAll('a[href^="javascript:"]')).filter((a: Element) => {
+            const el = a as HTMLElement;
+            return el.offsetParent !== null && textPattern.test(el.textContent || '');
+          }) as HTMLElement[],
+          // 4. nextBtn/nextBtn2 クラス（全労済パターン）
+          ...Array.from(document.querySelectorAll('a.nextBtn, a.nextBtn2')) as HTMLElement[],
+          // 5. role="button" ARIAボタン
+          ...Array.from(document.querySelectorAll('[role="button"]')).filter((b: Element) => {
+            const el = b as HTMLElement;
+            return el.offsetParent !== null && textPattern.test(el.textContent || '');
+          }) as HTMLElement[],
+          // 6. div/span[onclick] カスタムクリック要素
+          ...Array.from(document.querySelectorAll('div[onclick], span[onclick]')).filter((b: Element) => {
+            const el = b as HTMLElement;
+            return el.offsetParent !== null && textPattern.test(el.textContent || '');
+          }) as HTMLElement[],
+          // 7. テキストマッチのボタン
+          ...Array.from(document.querySelectorAll('button')).filter((b: Element) => {
+            const el = b as HTMLElement;
+            return el.offsetParent !== null && textPattern.test(el.textContent || '');
+          }) as HTMLElement[],
+          // 8. テキストマッチのリンク
+          ...Array.from(document.querySelectorAll('a')).filter((a: Element) => {
+            const el = a as HTMLElement;
+            return el.offsetParent !== null && textPattern.test(el.textContent || '');
+          }) as HTMLElement[],
         ];
-        if (candidates.length === 0) return null;
-        const el = candidates[0] as HTMLElement;
+        
+        // 重複削除
+        const seen = new Set<HTMLElement>();
+        const uniqueCandidates = candidates.filter(el => {
+          if (seen.has(el)) return false;
+          seen.add(el);
+          return true;
+        });
+        
+        if (uniqueCandidates.length === 0) return null;
+        const el = uniqueCandidates[0];
+        const tagName = el.tagName.toLowerCase();
+        
         let selector = '';
-        if (el.id) selector = `#${el.id}`;
-        else if (el.getAttribute('name')) selector = `[name="${el.getAttribute('name')}"]`;
-        else if (el.getAttribute('type') === 'submit') selector = '[type="submit"]';
-        else selector = `button:has-text("${el.textContent?.trim().substring(0, 20)}")`;
+        if (el.id) {
+          selector = `#${el.id}`;
+        } else if (el.className && typeof el.className === 'string') {
+          // クラス名からセレクタを構築（複数クラスの場合は最初のものを使用）
+          const className = el.className.trim().split(/\s+/)[0];
+          if (className) {
+            selector = `${tagName}.${className}`;
+          }
+        }
+        if (!selector && el.getAttribute('name')) {
+          selector = `${tagName}[name="${el.getAttribute('name')}"]`;
+        }
+        if (!selector && el.getAttribute('type') === 'submit') {
+          selector = `${tagName}[type="submit"]`;
+        }
+        if (!selector) {
+          const text = el.textContent?.trim().substring(0, 20) || '';
+          selector = `${tagName}:has-text("${text}")`;
+        }
+        
         return { selector, text: el.textContent?.trim() || '' };
       });
 
@@ -300,10 +394,14 @@ export class BrowserManager {
             },
           });
 
-          // 入力前キャプチャ
+          // 入力前キャプチャ（タイムアウト30秒、失敗しても続行）
           const beforePath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_before.png`);
-          await page.screenshot({ path: beforePath, fullPage: this.settings.screenshot.fullPage });
-          screenshots.push(beforePath);
+          try {
+            await page.screenshot({ path: beforePath, fullPage: this.settings.screenshot.fullPage, timeout: 30000 });
+            screenshots.push(beforePath.replace(/\\/g, '/'));
+          } catch (ssErr: any) {
+            this.log('warn', `[${testCase.caseId}] ⚠️ スクリーンショット取得失敗（続行）: ${ssErr.message}`);
+          }
 
           // 入力
           const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
@@ -318,7 +416,8 @@ export class BrowserManager {
               await inputHandler.fillField(page, field);
               // 入力後にポップアップが残っていれば閉じる
               await page.keyboard.press('Escape').catch(() => {});
-              await page.waitForTimeout(100);
+              const afterInputDelay = this.settings.timeout?.afterInputDelay ?? 200;
+              await page.waitForTimeout(afterInputDelay);
               appendLog('debug', `[${testCase.caseId}] 入力成功: [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
               this.log('info', `[${testCase.caseId}] ✅ 入力: [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
             } catch (err: any) {
@@ -342,10 +441,18 @@ export class BrowserManager {
             }
           }
 
-          // 入力後キャプチャ
+          // 入力後キャプチャ（タイムアウト30秒、失敗しても続行）
+          // スクリーンショット前に待機（CSSアニメーション/トランジション完了待ち）
+          const screenshotDelay = this.settings.timeout?.screenshotDelay ?? 500;
+          await page.waitForTimeout(screenshotDelay);
+          
           const afterPath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_after.png`);
-          await page.screenshot({ path: afterPath, fullPage: this.settings.screenshot.fullPage });
-          screenshots.push(afterPath);
+          try {
+            await page.screenshot({ path: afterPath, fullPage: this.settings.screenshot.fullPage, timeout: 30000 });
+            screenshots.push(afterPath.replace(/\\/g, '/'));
+          } catch (ssErr: any) {
+            this.log('warn', `[${testCase.caseId}] ⚠️ スクリーンショット取得失敗（続行）: ${ssErr.message}`);
+          }
 
           // 送信ボタンクリック → 次画面へ遷移
           let submitSelector = pageInput.submitSelector || sessionPage?.submitSelector;
@@ -353,20 +460,54 @@ export class BrowserManager {
           // submitSelector が空の場合、自動検出を試みる
           if (!submitSelector) {
             this.log('info', `[${testCase.caseId}] 🔍 送信ボタンを自動検出中...`);
+            
+            // デバッグ: ページ内のボタン候補を列挙
+            const debugInfo = await page.evaluate(() => {
+              const results: string[] = [];
+              
+              // javascript: リンクをチェック
+              const jsLinks = document.querySelectorAll('a[href^="javascript:"]');
+              results.push(`javascript:リンク数: ${jsLinks.length}`);
+              jsLinks.forEach((a, i) => {
+                const el = a as HTMLElement;
+                const text = el.textContent?.trim().substring(0, 30) || '';
+                const visible = el.offsetParent !== null;
+                const classes = el.className || '';
+                results.push(`  [${i}] text="${text}" visible=${visible} class="${classes}"`);
+              });
+              
+              // nextBtn/nextBtn2 をチェック
+              const nextBtns = document.querySelectorAll('a.nextBtn, a.nextBtn2');
+              results.push(`nextBtn/nextBtn2数: ${nextBtns.length}`);
+              nextBtns.forEach((a, i) => {
+                const el = a as HTMLElement;
+                const text = el.textContent?.trim().substring(0, 30) || '';
+                const visible = el.offsetParent !== null;
+                results.push(`  [${i}] text="${text}" visible=${visible}`);
+              });
+              
+              return results.join('\n');
+            });
+            appendLog('debug', `[${testCase.caseId}] ボタン候補:\n${debugInfo}`);
+            
             const autoDetected = await page.evaluate(() => {
               // 優先度順に検索（セレクタパターン）
               const patterns = [
                 'button[type="submit"]:not([disabled])',
                 'input[type="submit"]:not([disabled])',
-                'a[href^="javascript:"]:not([disabled])',  // javascript: リンク追加
-                'a.nextBtn:not([disabled])',
-                'a.nextBtn2:not([disabled])',
+                'input[type="image"]',  // 画像ボタン
+                'a[href^="javascript:"]',  // disabled チェック削除（aタグには通常ない）
+                'a.nextBtn',
+                'a.nextBtn2',
+                '[role="button"]',  // ARIAボタン
+                'div[onclick]',     // カスタムクリック要素
+                'span[onclick]',    // カスタムクリック要素
                 'button.btn-primary:not([disabled])',
                 'button.submit:not([disabled])',
-                'a.btn-primary:not([disabled])',
-                'a.btn-submit:not([disabled])',
-                '.btn-start:not([disabled])',
-                '.submit-btn:not([disabled])',
+                'a.btn-primary',
+                'a.btn-submit',
+                '.btn-start',
+                '.submit-btn',
               ];
               // テキストパターン（日本語保険サイト対応を強化）
               const textPatterns = [
@@ -377,25 +518,38 @@ export class BrowserManager {
 
               for (const pattern of patterns) {
                 const el = document.querySelector(pattern) as HTMLElement | null;
-                if (el && el.offsetParent !== null) {
-                  const id = el.id ? `#${el.id}` : null;
-                  const className = el.className ? `.${el.className.split(' ')[0]}` : null;
-                  const name = el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : null;
-                  return id || className || name || pattern;
+                // offsetParent チェックを緩和（fixedやabsoluteでもnullになることがある）
+                if (el) {
+                  const style = window.getComputedStyle(el);
+                  const isHidden = style.display === 'none' || style.visibility === 'hidden';
+                  if (!isHidden) {
+                    const id = el.id ? `#${el.id}` : null;
+                    const className = el.className && typeof el.className === 'string' 
+                      ? `.${el.className.trim().split(/\s+/)[0]}` 
+                      : null;
+                    const name = el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : null;
+                    return id || className || name || pattern;
+                  }
                 }
               }
 
               // テキストマッチで検索（button, a, input, div等を広く検索）
               const allClickables = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')) as HTMLElement[];
               for (const btn of allClickables) {
-                if (btn.offsetParent === null) continue; // 非表示はスキップ
-                const text = btn.textContent?.trim().toLowerCase() || '';
-                const value = (btn as HTMLInputElement).value?.toLowerCase() || '';
-                const combined = text + ' ' + value;
+                // 表示チェックを緩和
+                const style = window.getComputedStyle(btn);
+                const isHidden = style.display === 'none' || style.visibility === 'hidden';
+                if (isHidden) continue;
+                
+                const text = btn.textContent?.trim() || '';
+                const value = (btn as HTMLInputElement).value || '';
+                const combined = (text + ' ' + value).toLowerCase();
                 for (const keyword of textPatterns) {
                   if (combined.includes(keyword.toLowerCase())) {
                     const id = btn.id ? `#${btn.id}` : null;
-                    const className = btn.className ? `.${btn.className.split(' ')[0]}` : null;
+                    const className = btn.className && typeof btn.className === 'string'
+                      ? `.${btn.className.trim().split(/\s+/)[0]}`
+                      : null;
                     const name = btn.getAttribute('name') ? `[name="${btn.getAttribute('name')}"]` : null;
                     const tagName = btn.tagName.toLowerCase();
                     const textContent = btn.textContent?.trim().substring(0, 20) || value;
@@ -414,7 +568,21 @@ export class BrowserManager {
             }
           }
 
-          if (submitSelector) {
+          // 次のステップが同じURLなら送信しない（同一ページの動的フィールドを続けて入力するため）
+          const nextPageInput = sortedInputs[i + 1];
+          const nextSessionPage = nextPageInput
+            ? session.pages.find(p => p.stepNumber === nextPageInput.stepNumber)
+            : null;
+          const currentStepUrl = sessionPage?.url || '';
+          const nextStepUrl = nextSessionPage?.url || '';
+          // ファイル名で比較（ticketパラメータの違いを無視）
+          const urlFile = (u: string) => u.split('?')[0].split('/').filter(Boolean).pop() || '';
+          const isSamePageNext = !!(nextStepUrl && currentStepUrl &&
+            urlFile(nextStepUrl) === urlFile(currentStepUrl));
+
+          if (isSamePageNext) {
+            this.log('info', `[${testCase.caseId}] ⏭ 次のステップも同じページ → 送信スキップして続けて入力`);
+          } else if (submitSelector) {
             try {
               const btn = page.locator(submitSelector).first();
 
@@ -525,10 +693,12 @@ export class BrowserManager {
                   this.log('info', `[${testCase.caseId}] ✅ ページ内容の変化を確認 (SPA遷移)`);
                 } else {
                   this.log('warn', `[${testCase.caseId}] ⚠️ ページ遷移が検出されませんでした（入力不足の可能性）`);
-                  // スクリーンショットを追加保存
+                  // スクリーンショットを追加保存（タイムアウト30秒、失敗しても続行）
                   const stuckPath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_stuck.png`);
-                  await page.screenshot({ path: stuckPath, fullPage: this.settings.screenshot.fullPage });
-                  screenshots.push(stuckPath);
+                  try {
+                    await page.screenshot({ path: stuckPath, fullPage: this.settings.screenshot.fullPage, timeout: 30000 });
+                    screenshots.push(stuckPath.replace(/\\/g, '/'));
+                  } catch { /* ignore */ }
                 }
               }
             } catch (err: any) {
@@ -537,10 +707,16 @@ export class BrowserManager {
           }
         }
 
-        // 最終画面キャプチャ
+        // 最終画面キャプチャ（タイムアウト30秒、失敗しても続行）
+        // 最終画面が完全に読み込まれるのを待つ
+        const finalScreenshotDelay = this.settings.timeout?.screenshotDelay ?? 500;
+        await page.waitForTimeout(finalScreenshotDelay);
+        
         const finalPath = path.join(screenshotDir, 'final.png');
-        await page.screenshot({ path: finalPath, fullPage: this.settings.screenshot.fullPage });
-        screenshots.push(finalPath);
+        try {
+          await page.screenshot({ path: finalPath, fullPage: this.settings.screenshot.fullPage, timeout: 30000 });
+          screenshots.push(finalPath.replace(/\\/g, '/'));
+        } catch { /* ignore */ }
 
         results.push({
           caseId: testCase.caseId,

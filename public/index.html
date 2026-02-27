@@ -28,6 +28,7 @@
   .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
   .header h1 { font-size: 18px; font-weight: 600; }
   .header .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text2); }
+  .header .version { font-size: 11px; color: var(--text2); background: var(--surface2); padding: 2px 8px; border-radius: 4px; }
   .header .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text2); }
   .header .status .dot.connected { background: var(--success); }
   .header .status .dot.recording { background: var(--danger); animation: pulse 1s infinite; }
@@ -149,6 +150,7 @@
   <!-- Header -->
   <div class="header">
     <h1>🎭 Playwright Auto Test</h1>
+    <span class="version" id="versionBadge">v...</span>
     <div class="status">
       <span class="dot" id="statusDot"></span>
       <span id="statusText">未接続</span>
@@ -332,6 +334,12 @@
 </div>
 
 <script>
+// ===== Version =====
+fetch('/api/version')
+  .then(r => r.json())
+  .then(v => { document.getElementById('versionBadge').textContent = 'v' + v.version; })
+  .catch(() => { document.getElementById('versionBadge').textContent = 'v?'; });
+
 // ===== State =====
 let ws = null;
 let isRecording = false;
@@ -398,6 +406,17 @@ function handleMessage(msg) {
           collectedPages.push(msg.payload);
         }
         renderCollectedPages();
+      }
+      break;
+    
+    case 'recording:submit-detected':
+      // クリックされたボタン情報で既存ページを更新
+      const pageToUpdate = collectedPages.find(p => p.id === msg.payload.pageId);
+      if (pageToUpdate) {
+        pageToUpdate.submitSelector = msg.payload.submitSelector;
+        pageToUpdate.submitText = msg.payload.submitText;
+        renderCollectedPages();
+        addLog('info', `🎯 送信ボタン検出: ${msg.payload.submitSelector}`);
       }
       break;
     
@@ -992,8 +1011,9 @@ function renderReplayResults(results) {
         ${r.screenshots?.length > 0 ? `
           <div class="screenshot-grid">
             ${r.screenshots.map(s => {
-              const filename = s.split('/').pop();
-              const relativePath = s.replace(/^.*data\/screenshots\//, '');
+              const normalized = s.replace(/\\/g, '/');
+              const filename = normalized.split('/').pop();
+              const relativePath = normalized.replace(/^.*data\/screenshots\//, '');
               return `<div class="screenshot-item">
                 <img src="/screenshots/${relativePath}" loading="lazy" onclick="window.open(this.src)">
                 <div class="caption">${filename}</div>
