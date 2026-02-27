@@ -9,7 +9,13 @@ import { InputHandler } from './input-handler.js';
 type SendFn = (msg: WSMessage) => void;
 
 function timestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const d = new Date();
+  return d.getFullYear().toString()
+    + String(d.getMonth() + 1).padStart(2, '0')
+    + String(d.getDate()).padStart(2, '0')
+    + String(d.getHours()).padStart(2, '0')
+    + String(d.getMinutes()).padStart(2, '0')
+    + String(d.getSeconds()).padStart(2, '0');
 }
 
 function getLogFilePath(): string {
@@ -401,6 +407,8 @@ export class BrowserManager {
       const screenshotDir = path.resolve('data/screenshots', `${testCase.caseId}_${timestamp()}`);
       fs.mkdirSync(screenshotDir, { recursive: true });
       const screenshots: string[] = [];
+      let ssSeq = 0;  // スクリーンショット通番
+      const nextSsPath = () => path.join(screenshotDir, `${testCase.caseId}_${String(++ssSeq).padStart(3, '0')}.png`);
 
       // ケース開始を通知（ブラウザ起動前）
       this.send({
@@ -462,8 +470,7 @@ export class BrowserManager {
           });
 
           // 入力前キャプチャ
-          const beforePath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_before.png`);
-          await this.takeScreenshot(page, beforePath, `${testCase.caseId} step${pageInput.stepNumber} before`, screenshots);
+          await this.takeScreenshot(page, nextSsPath(), `${testCase.caseId} step${pageInput.stepNumber} before`, screenshots);
 
           // 入力
           const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
@@ -507,8 +514,7 @@ export class BrowserManager {
           const screenshotDelay = this.settings.timeout?.screenshotDelay ?? 500;
           await page.waitForTimeout(screenshotDelay);
 
-          const afterPath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_after.png`);
-          await this.takeScreenshot(page, afterPath, `${testCase.caseId} step${pageInput.stepNumber} after`, screenshots);
+          await this.takeScreenshot(page, nextSsPath(), `${testCase.caseId} step${pageInput.stepNumber} after`, screenshots);
 
           // 送信ボタンクリック → 次画面へ遷移
           let submitSelector = pageInput.submitSelector || sessionPage?.submitSelector;
@@ -750,8 +756,7 @@ export class BrowserManager {
                 } else {
                   this.log('warn', `[${testCase.caseId}] ⚠️ ページ遷移が検出されませんでした（入力不足の可能性）`);
                   // スタック時スクリーンショット
-                  const stuckPath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_stuck.png`);
-                  await this.takeScreenshot(page, stuckPath, `${testCase.caseId} step${pageInput.stepNumber} stuck`, screenshots);
+                  await this.takeScreenshot(page, nextSsPath(), `${testCase.caseId} step${pageInput.stepNumber} stuck`, screenshots);
                 }
               }
             } catch (err: any) {
@@ -764,8 +769,7 @@ export class BrowserManager {
         const finalScreenshotDelay = this.settings.timeout?.screenshotDelay ?? 500;
         await page.waitForTimeout(finalScreenshotDelay);
 
-        const finalPath = path.join(screenshotDir, 'final.png');
-        await this.takeScreenshot(page, finalPath, `${testCase.caseId} final`, screenshots);
+        await this.takeScreenshot(page, nextSsPath(), `${testCase.caseId} final`, screenshots);
 
         results.push({
           caseId: testCase.caseId,
