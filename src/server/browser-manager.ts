@@ -44,6 +44,9 @@ export class BrowserManager {
   private stepCounter = 0;
   // ページ遷移前にconsole経由で受け取ったボタンクリック情報（①対応）
   private _pendingClickedSubmit: { selector: string; text: string } | null = null;
+  // autoCollectFields の並行実行防止フラグ
+  private _collecting = false;
+  private _pendingCollect = false;
 
   constructor(settings: Settings, send: SendFn) {
     this.settings = settings;
@@ -97,8 +100,12 @@ export class BrowserManager {
         if (tag === 'a' && el.href && el.href.indexOf('javascript:') === 0) return true;
         if (el.getAttribute && el.getAttribute('role') === 'button') return true;
         if (el.classList && (el.classList.contains('nextBtn') || el.classList.contains('nextBtn2'))) return true;
-        var text = (el.textContent || '').toLowerCase();
-        return /次へ|進む|送信|確認|完了|登録|スタート|開始|診断|申込|submit|next|confirm|start/.test(text);
+        // テキストマッチは button/a のみ（div/span などの大きなコンテナは除外して誤検出を防ぐ）
+        if (tag === 'button' || tag === 'a') {
+          var text = (el.textContent || '').toLowerCase();
+          return /次へ|進む|送信|確認|完了|登録|スタート|開始|診断|申込|submit|next|confirm|start/.test(text);
+        }
+        return false;
       }
       document.addEventListener('click', function(e) {
         var el = e.target;
@@ -178,6 +185,29 @@ export class BrowserManager {
   }
 
   private async autoCollectFields(): Promise<void> {
+    if (!this.page || !this.recording || this.page.isClosed()) return;
+
+    // 並行実行防止: 収集中なら1回だけキューして終了
+    if (this._collecting) {
+      this._pendingCollect = true;
+      return;
+    }
+    this._collecting = true;
+    this._pendingCollect = false;
+
+    try {
+      await this._doCollect();
+    } finally {
+      this._collecting = false;
+      if (this._pendingCollect) {
+        this._pendingCollect = false;
+        // キューされた1回を実行（遅延して再収集）
+        setTimeout(() => this.autoCollectFields(), 300);
+      }
+    }
+  }
+
+  private async _doCollect(): Promise<void> {
     if (!this.page || !this.recording || this.page.isClosed()) return;
 
     // URLをasync処理前に即座に取得（遷移中に変わらないように）

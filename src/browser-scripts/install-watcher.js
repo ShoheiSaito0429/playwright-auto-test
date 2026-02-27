@@ -40,9 +40,12 @@
     if (tag === 'a' && el.href?.startsWith('javascript:')) return true;
     if (el.getAttribute('role') === 'button') return true;
     if (el.classList?.contains('nextBtn') || el.classList?.contains('nextBtn2')) return true;
-    // テキストパターン
-    const text = (el.textContent || '').toLowerCase();
-    return /次へ|進む|送信|確認|完了|登録|スタート|開始|診断|申込|submit|next|confirm|start/.test(text);
+    // テキストマッチは button/a のみ（div/span などの大きなコンテナは除外して誤検出を防ぐ）
+    if (tag === 'button' || tag === 'a') {
+      const text = (el.textContent || '').toLowerCase();
+      return /次へ|進む|送信|確認|完了|登録|スタート|開始|診断|申込|submit|next|confirm|start/.test(text);
+    }
+    return false;
   };
 
   document.addEventListener('click', (e) => {
