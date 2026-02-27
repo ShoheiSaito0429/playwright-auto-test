@@ -464,11 +464,13 @@ function handleMessage(msg) {
     case 'recording:page-collected':
     case 'fields:collected':
       if (msg.type === 'recording:page-collected') {
-        // 同じステップの既存データを更新 or 追加
-        const existing = collectedPages.findIndex(p => p.url === msg.payload.url);
+        // stepNumberで判定（同じURLでも画面が違えば別ステップ）
+        const existing = collectedPages.findIndex(p => p.stepNumber === msg.payload.stepNumber);
         if (existing >= 0) {
+          // 同じステップなら更新（フィールドマージ後の再送信など）
           collectedPages[existing] = msg.payload;
         } else {
+          // 新しいステップとして追加
           collectedPages.push(msg.payload);
         }
         renderCollectedPages();

@@ -451,6 +451,8 @@ export class BrowserManager {
       });
 
       this.log('info', `ステップ${this.stepCounter}: ${fields.length}個のフィールドを検出 (${title})`);
+      this.log('info', `  └ URL: ${url.substring(0, 80)}${url.length > 80 ? '...' : ''}`);
+      this.log('info', `  └ セッション内ページ数: ${this.session.pages.length}`);
     } catch (err: any) {
       this.log('warn', `フィールド収集エラー: ${err.message}`);
     }
@@ -532,12 +534,27 @@ export class BrowserManager {
     this.session.pages = pages;
     this.session.completedAt = new Date().toISOString();
 
+    // 詳細ログ出力
+    this.log('info', `━━━ 記録サマリー ━━━`);
+    this.log('info', `📊 合計ページ数: ${pages.length}`);
+    for (const page of pages) {
+      const preClickCount = page.preClicks?.length ?? 0;
+      const fieldCount = page.fields?.length ?? 0;
+      this.log('info', `  ステップ${page.stepNumber}: ${fieldCount}フィールド, ${preClickCount}preClicks, submit="${page.submitText || 'なし'}"`);
+      if (page.preClicks && page.preClicks.length > 0) {
+        for (const pc of page.preClicks) {
+          this.log('info', `    └ preClick: "${pc.text}"`);
+        }
+      }
+    }
+    this.log('info', `━━━━━━━━━━━━━━━━━━`);
+
     const dir = path.resolve('data/recordings');
     fs.mkdirSync(dir, { recursive: true });
     const filePath = path.join(dir, `${this.session.name}.json`);
     fs.writeFileSync(filePath, JSON.stringify(this.session, null, 2), 'utf-8');
 
-    this.log('info', `記録を保存しました: ${filePath}`);
+    this.log('info', `✅ 記録を保存しました: ${filePath}`);
     this.send({ type: 'recording:complete', payload: this.session });
 
     await this.cleanup();

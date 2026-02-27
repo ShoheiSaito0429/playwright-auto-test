@@ -360,8 +360,8 @@ wss.on('connection', (ws: WebSocket) => {
         }
         case 'recording:stop': {
           // GUIから完成されたページ情報と一緒にstopを呼ぶ
-          // ページ情報はHTTP APIで別途保存される
-          await browserManager.stopRecording([]);
+          const pages = (msg.payload as any)?.pages || [];
+          await browserManager.stopRecording(pages);
           break;
         }
         case 'replay:start': {
