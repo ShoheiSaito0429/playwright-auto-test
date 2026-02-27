@@ -358,6 +358,18 @@ export class BrowserManager {
       fs.mkdirSync(screenshotDir, { recursive: true });
       const screenshots: string[] = [];
 
+      // ケース開始を通知（ブラウザ起動前）
+      this.send({
+        type: 'replay:progress',
+        payload: {
+          caseId: testCase.caseId,
+          step: 0,
+          total: testCase.pageInputs.length,
+          status: `🚀 ブラウザ起動中...`,
+        },
+      });
+      this.log('info', `[${testCase.caseId}] 🚀 ケース開始: ${testCase.caseName}`);
+
       const browser = await chromium.launch({
         headless: this.settings.browser.headless,
         slowMo: this.settings.browser.slowMo,
@@ -371,6 +383,17 @@ export class BrowserManager {
         // 開始URL（記録時の最初のページ）に移動
         const startUrl = session.startUrl || session.pages[0]?.url;
         if (!startUrl) throw new Error('開始URLが不明です');
+
+        this.send({
+          type: 'replay:progress',
+          payload: {
+            caseId: testCase.caseId,
+            step: 0,
+            total: testCase.pageInputs.length,
+            status: `🌐 開始URLへ移動中...`,
+          },
+        });
+        this.log('info', `[${testCase.caseId}] 🌐 開始URLへ移動: ${startUrl}`);
 
         await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: this.settings.timeout.navigation });
         // networkidle を best-effort で待つ（タイムアウトしても続行）
@@ -397,7 +420,7 @@ export class BrowserManager {
           // 入力前キャプチャ（タイムアウト30秒、失敗しても続行）
           const beforePath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_before.png`);
           try {
-            await page.screenshot({ path: beforePath, fullPage: this.settings.screenshot.fullPage, timeout: 30000 });
+            await page.screenshot({ path: beforePath, fullPage: false, timeout: 10000 });
             screenshots.push(beforePath.replace(/\\/g, '/'));
           } catch (ssErr: any) {
             this.log('warn', `[${testCase.caseId}] ⚠️ スクリーンショット取得失敗（続行）: ${ssErr.message}`);
@@ -448,7 +471,7 @@ export class BrowserManager {
           
           const afterPath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_after.png`);
           try {
-            await page.screenshot({ path: afterPath, fullPage: this.settings.screenshot.fullPage, timeout: 30000 });
+            await page.screenshot({ path: afterPath, fullPage: false, timeout: 10000 });
             screenshots.push(afterPath.replace(/\\/g, '/'));
           } catch (ssErr: any) {
             this.log('warn', `[${testCase.caseId}] ⚠️ スクリーンショット取得失敗（続行）: ${ssErr.message}`);
@@ -696,7 +719,7 @@ export class BrowserManager {
                   // スクリーンショットを追加保存（タイムアウト30秒、失敗しても続行）
                   const stuckPath = path.join(screenshotDir, `step${String(pageInput.stepNumber).padStart(2, '0')}_stuck.png`);
                   try {
-                    await page.screenshot({ path: stuckPath, fullPage: this.settings.screenshot.fullPage, timeout: 30000 });
+                    await page.screenshot({ path: stuckPath, fullPage: false, timeout: 10000 });
                     screenshots.push(stuckPath.replace(/\\/g, '/'));
                   } catch { /* ignore */ }
                 }
@@ -707,14 +730,14 @@ export class BrowserManager {
           }
         }
 
-        // 最終画面キャプチャ（タイムアウト30秒、失敗しても続行）
-        // 最終画面が完全に読み込まれるのを待つ
+        // 最終画面キャプチャ（タイムアウト10秒に短縮、失敗しても続行）
+        // ※ fullPageはフォント読み込みで長時間ブロックされる場合があるためviewportのみ
         const finalScreenshotDelay = this.settings.timeout?.screenshotDelay ?? 500;
         await page.waitForTimeout(finalScreenshotDelay);
         
         const finalPath = path.join(screenshotDir, 'final.png');
         try {
-          await page.screenshot({ path: finalPath, fullPage: this.settings.screenshot.fullPage, timeout: 30000 });
+          await page.screenshot({ path: finalPath, fullPage: false, timeout: 10000 });
           screenshots.push(finalPath.replace(/\\/g, '/'));
         } catch { /* ignore */ }
 
