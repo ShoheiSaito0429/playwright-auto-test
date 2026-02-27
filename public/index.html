@@ -1032,15 +1032,23 @@ async function loadMergeCases() {
         </div>`;
       for (const tc of file.cases) {
         const enabled = tc.enabled !== false;
-        html += `<label style="display: flex; align-items: center; gap: 8px; padding: 4px 8px; cursor: pointer; ${enabled ? '' : 'opacity:0.5;'}">
+        html += `<div style="display: flex; align-items: center; gap: 6px; padding: 4px 8px; ${enabled ? '' : 'opacity:0.5;'}">
           <input type="checkbox" class="merge-checkbox"
             data-session="${escAttr(sName)}"
             data-case="${escAttr(tc.caseId)}"
-            ${enabled ? 'checked' : ''}>
-          <span style="font-size: 12px; font-weight: 600; color: var(--primary);">${escHtml(tc.caseId)}</span>
-          <span style="font-size: 12px; color: var(--text2);">${escHtml(tc.caseName || '')}</span>
-        </label>`;
+            ${enabled ? 'checked' : ''} style="flex-shrink:0;">
+          <span style="font-size: 12px; font-weight: 600; color: var(--primary); flex-shrink:0;">${escHtml(tc.caseId)}</span>
+          <span style="font-size: 12px; color: var(--text2); flex:1;">${escHtml(tc.caseName || '')}</span>
+          <button onclick="deleteReplayCase(${JSON.stringify(sName)}, ${JSON.stringify(tc.caseId)})"
+            style="flex-shrink:0; padding:2px 6px; border-radius:4px; border:1px solid var(--border);
+            background:transparent; cursor:pointer; font-size:11px; color:var(--danger);" title="削除">🗑️</button>
+        </div>`;
       }
+      html += `<div style="padding: 4px 8px;">
+        <button onclick="addReplayCase(${JSON.stringify(sName)})"
+          style="width:100%; padding:4px; border-radius:4px; border:1px dashed var(--border);
+          background:transparent; cursor:pointer; font-size:12px; color:var(--primary);">＋ 追加</button>
+      </div>`;
       html += '</div>';
     }
     html += '</div>';
@@ -1068,37 +1076,79 @@ async function loadReplayCases() {
     replayTestCases = matchCase?.cases || [];
   } catch { replayTestCases = []; }
   
-  if (replayTestCases.length === 0) {
-    caseListEl.innerHTML = '<div style="color: var(--warning); font-size: 13px;">⚠️ テストケースがありません。先にテストケースタブで作成してください。</div>';
-    return;
+  // チェックボックスリストを生成（ケースが0件でも追加ボタンは表示）
+  let html = '<div style="border: 1px solid var(--border); border-radius: 6px; overflow: hidden;">';
+
+  if (replayTestCases.length > 0) {
+    html += `<div style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface2);">
+      <input type="checkbox" id="selectAllCases" onchange="toggleAllCases(this.checked)">
+      <strong style="font-size: 13px; flex:1;">全て選択 (${replayTestCases.length}件)</strong>
+    </div>
+    <div style="border-top: 1px solid var(--border);"></div>
+    <div style="max-height: 200px; overflow-y: auto; padding: 4px 0;">`;
+    replayTestCases.forEach((tc, i) => {
+      const op = tc.enabled ? '' : 'opacity:0.5;';
+      html += `<div style="display: flex; align-items: center; gap: 6px; padding: 4px 8px; ${op}">
+        <input type="checkbox" class="case-checkbox" value="${escAttr(tc.caseId)}" ${tc.enabled ? 'checked' : ''} style="flex-shrink:0;">
+        <span style="font-size: 12px; font-weight:600; color:var(--primary); flex-shrink:0;">${escHtml(tc.caseId)}</span>
+        <span style="font-size: 12px; color:var(--text2); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(tc.caseName || '')}</span>
+        <button onclick="deleteReplayCase(${JSON.stringify(sessionName)}, ${JSON.stringify(tc.caseId)})"
+          style="flex-shrink:0; padding:2px 6px; border-radius:4px; border:1px solid var(--border);
+          background:transparent; cursor:pointer; font-size:11px; color:var(--danger);" title="削除">🗑️</button>
+      </div>`;
+    });
+    html += '</div>';
+  } else {
+    html += '<div style="padding: 10px; font-size: 13px; color: var(--text2);">ケースがありません</div>';
   }
-  
-  // チェックボックスリストを生成
-  let html = '<div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px;">';
-  html += `<label style="display: flex; align-items: center; gap: 8px; padding: 4px 8px; margin-bottom: 4px; background: var(--surface2); border-radius: 4px; cursor: pointer;">
-    <input type="checkbox" id="selectAllCases" onchange="toggleAllCases(this.checked)"> 
-    <strong>全て選択 (${replayTestCases.length}件)</strong>
-  </label>`;
-  html += '<hr style="border: none; border-top: 1px solid var(--border); margin: 8px 0;">';
-  
-  replayTestCases.forEach((tc, i) => {
-    const enabledStyle = tc.enabled ? '' : 'opacity: 0.5;';
-    html += `<label style="display: flex; align-items: center; gap: 8px; padding: 4px 8px; cursor: pointer; ${enabledStyle}">
-      <input type="checkbox" class="case-checkbox" value="${escAttr(tc.caseId)}" ${tc.enabled ? 'checked' : ''}>
-      <span>${escHtml(tc.caseId)}</span>
-      <span style="color: var(--text2); font-size: 12px;">${escHtml(tc.caseName || '')}</span>
-      ${!tc.enabled ? '<span style="color: var(--warning); font-size: 11px;">(無効)</span>' : ''}
-    </label>`;
-  });
+
+  html += `<div style="border-top: 1px solid var(--border); padding: 6px 8px;">
+    <button onclick="addReplayCase(${JSON.stringify(sessionName)})"
+      style="width:100%; padding: 6px; border-radius:6px; border: 1px dashed var(--border);
+      background: transparent; cursor: pointer; font-size: 13px; color: var(--primary);">
+      ＋ ケースを追加
+    </button>
+  </div>`;
   html += '</div>';
   caseListEl.innerHTML = html;
-  
-  // 全選択チェックボックスの状態を更新
+
   updateSelectAllState();
 }
 
 function toggleAllCases(checked) {
   document.querySelectorAll('.case-checkbox').forEach(cb => cb.checked = checked);
+}
+
+async function deleteReplayCase(sessionName, caseId) {
+  if (!confirm(`「${caseId}」を削除しますか？`)) return;
+  const res = await fetch(`/api/testcases/${encodeURIComponent(sessionName)}/cases/${encodeURIComponent(caseId)}`, {
+    method: 'DELETE',
+  });
+  if (res.ok) {
+    addLog('info', `🗑️ ケースを削除: ${caseId}`);
+    await loadReplayCases(); // リスト再読み込み
+    if (currentReplayMode === 'merge') await loadMergeCases();
+  } else {
+    alert('削除に失敗しました');
+  }
+}
+
+async function addReplayCase(sessionName) {
+  const caseId = prompt('新しいケースID:', `CASE_${String(Date.now()).slice(-4)}`);
+  if (!caseId) return;
+  const caseName = prompt('ケース名（任意）:', '') ?? '';
+  const newCase = { caseId, caseName, enabled: true, pageInputs: [] };
+  const res = await fetch(`/api/testcases/${encodeURIComponent(sessionName)}/cases`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(newCase),
+  });
+  if (res.ok) {
+    addLog('info', `✅ ケースを追加: ${caseId}`);
+    await loadReplayCases();
+  } else {
+    alert('追加に失敗しました');
+  }
 }
 
 function updateSelectAllState() {

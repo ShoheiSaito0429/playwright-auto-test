@@ -122,6 +122,31 @@ app.post('/api/testcases/:name', (req, res) => {
   res.json({ ok: true });
 });
 
+// ケース単体削除
+app.delete('/api/testcases/:name/cases/:caseId', (req, res) => {
+  const dir = path.resolve('data/testcases');
+  const filePath = path.join(dir, `${req.params.name}.json`);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'not found' });
+  const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  data.cases = (data.cases || []).filter((c: any) => c.caseId !== req.params.caseId);
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  res.json({ ok: true, remaining: data.cases.length });
+});
+
+// ケース単体追加（空ケース）
+app.post('/api/testcases/:name/cases', (req, res) => {
+  const dir = path.resolve('data/testcases');
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${req.params.name}.json`);
+  const data = fs.existsSync(filePath)
+    ? JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    : { sessionName: req.params.name, cases: [] };
+  const newCase = req.body; // { caseId, caseName, enabled, pageInputs }
+  data.cases = [...(data.cases || []), newCase];
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  res.json({ ok: true, case: newCase });
+});
+
 // === API: テストケースをExcelエクスポート（転置レイアウト） ===
 app.post('/api/testcases/:name/export', (req, res) => {
   const { session, cases }: { session: RecordingSession; cases: TestCase[] } = req.body;
