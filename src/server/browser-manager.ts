@@ -364,17 +364,18 @@ export class BrowserManager {
     try {
       const result = await this.page.evaluate(() => {
         const textPattern = /次へ|進む|送信|確認|完了|登録|保存|スタート|開始|診断|申込|見積|ログイン|サインイン|submit|next|confirm|save|start|login/i;
-        const buildSel = (el: HTMLElement) => {
-          if (el.id) return `#${el.id}`;
+        // ※ アロー関数ではなく function宣言を使用（tsx/esbuildの__name注入を回避）
+        function buildSel(el) {
+          if (el.id) return '#' + el.id;
           const tag = el.tagName.toLowerCase();
           if (el.className && typeof el.className === 'string') {
             const cls = el.className.trim().split(/\s+/).filter(Boolean);
-            if (cls.length) return `${tag}.${cls.join('.')}`;
+            if (cls.length) return tag + '.' + cls.join('.');
           }
-          if (el.getAttribute('name')) return `${tag}[name="${el.getAttribute('name')}"]`;
-          const text = el.textContent?.trim().slice(0, 20);
-          return text ? `${tag}:has-text("${text}")` : tag;
-        };
+          if (el.getAttribute('name')) return tag + '[name="' + el.getAttribute('name') + '"]';
+          const text = (el.textContent || '').trim().slice(0, 20);
+          return text ? tag + ':has-text("' + text + '")' : tag;
+        }
         const candidates: HTMLElement[] = [
           ...Array.from(document.querySelectorAll('input[type="submit"], input[type="image"], button[type="submit"]')) as HTMLElement[],
           ...Array.from(document.querySelectorAll('a[href^="javascript:"], a.nextBtn, a.nextBtn2')) as HTMLElement[],
