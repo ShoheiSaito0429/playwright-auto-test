@@ -254,6 +254,17 @@ export class BrowserManager {
           prevPage.submitSelector = lastClick.selector;
           prevPage.submitText = lastClick.text;
           this.log('info', `🎯 submitSelector記録: ${lastClick.selector} "${lastClick.text}"`);
+          
+          // 最後のクリック以外をpreClicksとして記録（「戻る」→「OK」等の連続クリック対応）
+          if (pendingClicks.length > 1) {
+            const intermediateClicks = pendingClicks.slice(0, -1);
+            if (!prevPage.preClicks) prevPage.preClicks = [];
+            for (const pc of intermediateClicks) {
+              prevPage.preClicks.push({ selector: pc.selector, text: pc.text });
+              this.log('info', `🖱️ preClick記録（遷移前）: ${pc.selector} "${pc.text}"`);
+            }
+          }
+          
           this.send({
             type: 'recording:submit-detected',
             payload: { pageId: prevPage.id, submitSelector: lastClick.selector, submitText: lastClick.text },
