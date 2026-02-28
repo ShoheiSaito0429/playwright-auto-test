@@ -89,15 +89,36 @@ export class BrowserManager {
     // ページロード前から全クリックをキャプチャ（モーダル内ボタンも漏らさない）
     await this.context.addInitScript(`(function() {
       function buildClickSelector(el) {
-        if (el.id) return '#' + el.id;
+        if (!el) return '';
         var tag = (el.tagName || '').toLowerCase();
-        if (el.className && typeof el.className === 'string') {
-          var classes = el.className.trim().split(/\\s+/).filter(function(c){ return c; });
-          if (classes.length) return tag + '.' + classes.join('.');
+
+        // 1. id が最も確実
+        if (el.id) return '#' + el.id;
+
+        // 2. href が固有な場合（javascript: リンクや固有パスは識別子として最強）
+        var href = el.getAttribute ? (el.getAttribute('href') || '') : '';
+        if (href && href !== '#' && href !== 'javascript:void(0)' && href !== 'javascript:;') {
+          return tag + '[href="' + href + '"]';
         }
+
+        var text = ((el.textContent || '')).trim().replace(/\\s+/g, ' ').substring(0, 30);
+        var classes = (el.className && typeof el.className === 'string')
+          ? el.className.trim().split(/\\s+/).filter(function(c){ return c; })
+          : [];
+
+        // 3. クラス + テキスト の組み合わせ（クラス単独より確実）
+        if (classes.length && text) {
+          return tag + '.' + classes.join('.') + ':has-text("' + text + '")';
+        }
+
+        // 4. テキストのみ
+        if (text) return tag + ':has-text("' + text + '")';
+
+        // 5. クラスのみ（最終手段）
+        if (classes.length) return tag + '.' + classes.join('.');
+
         if (el.getAttribute && el.getAttribute('name')) return tag + '[name="' + el.getAttribute('name') + '"]';
-        var text = (el.textContent || '').trim().substring(0, 20);
-        return text ? tag + ':has-text("' + text + '")' : tag;
+        return tag;
       }
       function isClickableElement(el) {
         if (!el || !el.tagName) return false;
@@ -285,17 +306,31 @@ export class BrowserManager {
         }
       }
 
-      // 同一URLの場合はフィールドをマージ（タイムスタンプ更新）
+      // 同一URLの場合はフィールドをマージ（値・状態も更新）
       const lastPage = this.session!.pages.length > 0
         ? this.session!.pages[this.session!.pages.length - 1]
         : null;
       if (lastPage && lastPage.url === url) {
-        const existingSels = new Set(lastPage.fields.map((f: any) => f.selector));
-        const newFields = fields.filter((f: any) => !existingSels.has(f.selector));
-        if (newFields.length > 0) {
-          lastPage.fields.push(...newFields);
+        let updated = false;
+        for (const newField of fields) {
+          const existing = lastPage.fields.find((f: any) => f.selector === newField.selector);
+          if (existing) {
+            // 既存フィールドのvalue/checked/stateを更新（ユーザー入力値を反映）
+            if (existing.value !== newField.value || existing.checked !== newField.checked) {
+              existing.value = newField.value;
+              existing.checked = newField.checked;
+              existing.state = newField.state;
+              updated = true;
+            }
+          } else {
+            // 新フィールドを追加
+            lastPage.fields.push(newField);
+            updated = true;
+          }
+        }
+        if (updated) {
           lastPage.recordedAtMs = Date.now();
-          this.log('info', `🔄 同一URL: ${newFields.length}個の新フィールドをマージ`);
+          this.log('info', `🔄 同一URL: フィールド値を更新`);
           this.send({ type: 'recording:page-collected', payload: lastPage });
         }
         return;

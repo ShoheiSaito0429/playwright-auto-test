@@ -1,6 +1,6 @@
 {
   "name": "playwright-auto-test",
-  "version": "2.5.0-20260301",
+  "version": "2.6.0-20260301",
   "description": "GUI付きWebアプリ自動テストツール",
   "type": "module",
   "scripts": {

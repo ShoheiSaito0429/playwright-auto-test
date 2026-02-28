@@ -17,18 +17,37 @@
     }, 800);
   };
 
-  // セレクター構築
+  // セレクター構築（一意性を優先した優先順位）
   const buildSelector = (el) => {
     if (!el) return '';
-    if (el.id) return `#${el.id}`;
     const tag = el.tagName.toLowerCase();
-    if (el.className && typeof el.className === 'string') {
-      const classes = el.className.trim().split(/\s+/).filter(Boolean);
-      if (classes.length) return `${tag}.${classes.join('.')}`;
+
+    // 1. id が最も確実
+    if (el.id) return `#${el.id}`;
+
+    // 2. href が固有な場合（javascript: リンクや固有パスは識別子として最強）
+    const href = el.getAttribute('href') || '';
+    if (href && href !== '#' && href !== 'javascript:void(0)' && href !== 'javascript:;') {
+      return `${tag}[href="${href}"]`;
     }
-    if (el.getAttribute('name')) return `${tag}[name="${el.getAttribute('name')}"]`;
-    const text = el.textContent?.trim().substring(0, 20) || '';
+
+    const text = el.textContent?.trim().replace(/\s+/g, ' ').substring(0, 30) || '';
+    const classes = (typeof el.className === 'string')
+      ? el.className.trim().split(/\s+/).filter(Boolean)
+      : [];
+
+    // 3. クラス + テキスト の組み合わせ（クラス単独より確実）
+    if (classes.length && text) {
+      return `${tag}.${classes.join('.')}:has-text("${text}")`;
+    }
+
+    // 4. テキストのみ（クラスがない場合）
     if (text) return `${tag}:has-text("${text}")`;
+
+    // 5. クラスのみ（最終手段、同名クラスが複数ある可能性あり）
+    if (classes.length) return `${tag}.${classes.join('.')}`;
+
+    if (el.getAttribute('name')) return `${tag}[name="${el.getAttribute('name')}"]`;
     return tag;
   };
 
