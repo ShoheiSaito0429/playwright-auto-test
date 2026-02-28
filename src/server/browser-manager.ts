@@ -52,6 +52,8 @@ export class BrowserManager {
   // autoCollectFields の並行実行防止フラグ
   private _collecting = false;
   private _pendingCollect = false;
+  // ページ遷移発生時刻（framenavigated）: autoCollect完了時刻より早くページ境界を確定させる
+  private _lastNavMs: number = 0;
   // replay中止フラグ
   private _replayAborted = false;
 
@@ -196,6 +198,8 @@ export class BrowserManager {
     // SPA対応: URL変化を検知
     this.page.on('framenavigated', async (frame) => {
       if (!this.recording || !this.page || frame !== this.page.mainFrame()) return;
+      // ページ遷移時刻をautoCollect開始前に記録（クリック境界の正確な判定に使用）
+      this._lastNavMs = Date.now();
       await new Promise(r => setTimeout(r, 1000));
       await this.autoCollectFields();
     });
@@ -341,7 +345,10 @@ export class BrowserManager {
 
       this.stepCounter++;
       const pageId = uuid();
-      const nowMs = Date.now();
+      // recordedAtMsはautoCollect完了時刻ではなく、ページ遷移発生時刻を使う
+      // これにより「遷移後のページでのクリック」が前ページウィンドウに誤入しない
+      const nowMs = this._lastNavMs > 0 ? this._lastNavMs : Date.now();
+      this._lastNavMs = 0; // 使用済みリセット
 
       const recordedPage: RecordedPage = {
         id: pageId,
@@ -494,6 +501,16 @@ export class BrowserManager {
       this.log('warn', `クリックイベント読み取りエラー: ${e.message}`);
       return;
     }
+
+    // 重複排除: addInitScript と install-watcher の両方がリスナーを持つため
+    // 同一セレクタが100ms以内に連続で記録される → 1件に統合
+    const deduped: ClickEvent[] = [];
+    for (const e of clickEvents) {
+      const last = deduped[deduped.length - 1];
+      if (last && last.selector === e.selector && e.ts - last.ts < 100) continue;
+      deduped.push(e);
+    }
+    clickEvents = deduped;
 
     this.log('info', `📊 クリックイベント総数: ${clickEvents.length}`);
     if (clickEvents.length === 0) return;
