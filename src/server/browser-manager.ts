@@ -705,38 +705,33 @@ export class BrowserManager {
             
             // 「戻る」ボタン等の後にモーダル確認ダイアログが出た場合、「OK」ボタンを自動クリック
             if (preClick.text.includes('戻る')) {
-              // モーダル表示を待つ（アニメーション完了まで）
-              await page.waitForTimeout(500);
+              this.log('info', `[${testCase.caseId}] 🔍 戻るボタン後、OKボタンを探索中...`);
               
-              // リトライ付きでOKボタンを探してクリック
+              // Zenrosai用OKボタンセレクタ
+              const okSelectors = [
+                '.s-popup_btn a.c-btn.c-next.c-bg-green',
+                '.s-popup_btn_ok a.c-btn',
+                'a.c-btn.c-next.c-bg-green:not(.c-back)',
+              ];
+              
               let okClicked = false;
-              for (let retry = 0; retry < 3 && !okClicked; retry++) {
-                okClicked = await page.evaluate(() => {
-                  // モーダル内のOKボタンを探す（全労済パターン）
-                  const selectors = [
-                    '.s-popup_btn a.c-btn.c-next.c-bg-green',           // Zenrosai固有
-                    '.s-popup_btn_ok a.c-btn',                          // Zenrosai固有
-                    '.mfp-content a.c-btn:not(.c-back)',                // Magnific Popup
-                    '.mfp-content button:not(.c-back)',                 // Magnific Popup
-                    'a.c-btn.c-next.c-bg-green:not(.c-back)',           // 汎用
-                    '.modal a.c-btn:not(.c-back)',                      // 汎用モーダル
-                    '[class*="popup"] a.c-btn:not(.c-back)',            // popup含むクラス
-                  ];
-                  for (const sel of selectors) {
-                    const okBtn = document.querySelector(sel) as HTMLElement;
-                    if (okBtn && okBtn.offsetParent !== null) {
-                      okBtn.click();
-                      return true;
-                    }
+              for (const sel of okSelectors) {
+                try {
+                  // waitForSelectorで確実にモーダルが表示されるのを待つ
+                  const okBtn = await page.waitForSelector(sel, { state: 'visible', timeout: 3000 });
+                  if (okBtn) {
+                    this.log('info', `[${testCase.caseId}] ✅ OKボタン発見: ${sel}`);
+                    await okBtn.click();
+                    okClicked = true;
+                    break;
                   }
-                  return false;
-                }).catch(() => false);
-                if (!okClicked) {
-                  await new Promise(r => setTimeout(r, 300));  // リトライ前に少し待つ
+                } catch {
+                  // このセレクタでは見つからなかった
                 }
               }
+              
               if (okClicked) {
-                this.log('info', `[${testCase.caseId}] 🖱️ モーダルOK自動クリック`);
+                this.log('info', `[${testCase.caseId}] 🖱️ モーダルOK自動クリック成功`);
                 await page.waitForTimeout(1000);
               } else {
                 this.log('warn', `[${testCase.caseId}] ⚠️ モーダルOKボタンが見つからない`);
