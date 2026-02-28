@@ -74,6 +74,7 @@ export class BrowserManager {
     this.browser = await chromium.launch({
       headless: this.settings.browser.headless,
       slowMo: this.settings.browser.slowMo,
+      args: ['--remote-debugging-port=9222'],
     });
     this.context = await this.browser.newContext({
       viewport: this.settings.browser.viewport,
@@ -312,17 +313,14 @@ export class BrowserManager {
         : null;
       if (lastPage && lastPage.url === url) {
         // 同一URL内でのボタンクリック（モーダル閉じなど）→ preClicks として全て記録
+        let updated = false;
         if (pendingClicks.length > 0) {
           if (!lastPage.preClicks) lastPage.preClicks = [];
           for (const pc of pendingClicks) {
             lastPage.preClicks.push({ selector: pc.selector, text: pc.text });
             this.log('info', `🖱️ preClick記録: ${pc.selector} "${pc.text}"`);
           }
-          const last = pendingClicks[pendingClicks.length - 1];
-          this.send({
-            type: 'recording:submit-detected',
-            payload: { pageId: lastPage.id, submitSelector: `[preClick] ${last.text}`, submitText: last.text },
-          });
+          updated = true;
         }
         // フィールドをマージ（既存に含まれないものだけ追加）
         const existingSels = new Set(lastPage.fields.map((f: any) => f.selector));
@@ -330,7 +328,11 @@ export class BrowserManager {
         if (newFields.length > 0) {
           lastPage.fields.push(...newFields);
           this.log('info', `🔄 同一URL: ${newFields.length}個の新フィールドをマージ`);
-          this.send({ type: 'fields:collected', payload: { pageId: lastPage.id, fields: lastPage.fields } });
+          updated = true;
+        }
+        // 更新があった場合はクライアントに通知（preClicksを含めて再送信）
+        if (updated) {
+          this.send({ type: 'recording:page-collected', payload: lastPage });
         }
         return;
       }
