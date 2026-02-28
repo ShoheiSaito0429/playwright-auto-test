@@ -1,0 +1,22 @@
+{
+  "$schema": "https://openclaw.ai/schemas/config.json",
+  "version": 1,
+  "model": "claude-sonnet-4-6",
+  "workspace": "C:\\Users\\neko_\\openclaw-workspace",
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "YOUR_TELEGRAM_BOT_TOKEN",
+      "allowedUsers": ["7593295300"]
+    }
+  },
+  "tools": {
+    "exec": {
+      "enabled": true,
+      "security": "full"
+    },
+    "browser": {
+      "enabled": true
+    }
+  }
+}

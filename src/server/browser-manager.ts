@@ -684,6 +684,26 @@ export class BrowserManager {
               await page.locator(preClick.selector).first().click({ force: true, timeout: 3000 }).catch(() => {});
             }
             await page.waitForTimeout(800);
+            
+            // 「戻る」ボタン等の後にモーダル確認ダイアログが出た場合、「OK」ボタンを自動クリック
+            if (preClick.text.includes('戻る')) {
+              const okClicked = await page.evaluate(() => {
+                // モーダル内のOKボタンを探す（全労済パターン）
+                const okBtn = document.querySelector('.mfp-content a.c-btn:not(.c-back)') as HTMLElement
+                  || document.querySelector('.mfp-content button:not(.c-back)') as HTMLElement
+                  || document.querySelector('a.c-btn.c-next.c-bg-green:not(.c-back)') as HTMLElement;
+                if (okBtn && okBtn.offsetParent !== null) {
+                  okBtn.click();
+                  return true;
+                }
+                return false;
+              }).catch(() => false);
+              if (okClicked) {
+                this.log('info', `[${testCase.caseId}] 🖱️ モーダルOK自動クリック`);
+                await page.waitForTimeout(1000);
+              }
+            }
+            
             await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
           } catch (e: any) {
             this.log('warn', `[${testCase.caseId}] ⚠️ preClickエラー: ${preClick.selector} - ${e.message}`);
