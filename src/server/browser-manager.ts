@@ -2,9 +2,14 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuid } from 'uuid';
+import { fileURLToPath } from 'url';
 import type { RecordingSession, RecordedPage, Settings, TestCase, ReplayResult, WSMessage } from '../types.js';
 import { collectPageFields, installFieldWatcher } from './field-collector.js';
 import { InputHandler } from './input-handler.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'));
+const VERSION = packageJson.version;
 
 type SendFn = (msg: WSMessage) => void;
 
@@ -189,6 +194,7 @@ export class BrowserManager {
       });
     }
 
+    this.log('info', `━━━ Playwright Auto Test v${VERSION} ━━━`);
     this.log('info', '📹 記録開始 — ログイン画面を含めて全操作を手動で行ってください');
   }
 
@@ -615,6 +621,7 @@ export class BrowserManager {
     const inputHandler = new InputHandler();
     const results: ReplayResult[] = [];
 
+    this.log('info', `━━━ Playwright Auto Test v${VERSION} ━━━`);
     this.log('info', `${items.length}件のテストケースを実行します`);
 
     for (const { session, testCase } of items) {
