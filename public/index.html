@@ -389,6 +389,7 @@
           <select id="logFileSelect" onchange="loadLogFile()" style="flex:1; max-width:200px;"></select>
           <button class="btn btn-outline btn-sm" onclick="loadLogFile()">🔄 更新</button>
           <button class="btn btn-outline btn-sm" onclick="downloadLog()">📥 ダウンロード</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteLog()">🗑️ 削除</button>
           <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
             <input type="checkbox" id="autoRefreshLog" onchange="toggleAutoRefresh(this.checked)"> 自動更新(5s)
           </label>
@@ -502,6 +503,14 @@ function handleMessage(msg) {
     
     case 'recording:error':
       addLog('error', msg.payload.message);
+      break;
+
+    case 'collecting:start':
+      document.getElementById('collectingOverlay').style.display = 'flex';
+      break;
+
+    case 'collecting:end':
+      document.getElementById('collectingOverlay').style.display = 'none';
       break;
     
     case 'replay:progress':
@@ -890,9 +899,13 @@ function renderCaseTable() {
     // 画面番号（最初のフィールドのみ表示）
     if (fr.isFirstInStep) {
       const fieldsInStep = fieldRows.filter(f => f.stepNumber === fr.stepNumber).length;
-      html += `<td rowspan="${fieldsInStep}" style="vertical-align:top; text-align:center; font-weight:600; background:var(--surface2); border-right:2px solid var(--primary);">
+      html += `<td rowspan="${fieldsInStep}" style="vertical-align:top; text-align:center; font-weight:600; background:var(--surface2); border-right:2px solid var(--primary); min-width:70px;">
         <div style="font-size:16px;">${fr.stepNumber}</div>
-        <div style="font-size:10px; color:var(--text2); max-width:60px; overflow:hidden; text-overflow:ellipsis;">${escHtml(fr.pageTitle)}</div>
+        <div style="font-size:10px; color:var(--text2); max-width:60px; overflow:hidden; text-overflow:ellipsis; margin-bottom:6px;">${escHtml(fr.pageTitle)}</div>
+        <button onclick="removeSessionPage(${fr.stepNumber})"
+          style="padding:2px 6px; border-radius:4px; border:1px solid var(--danger);
+          background:transparent; cursor:pointer; font-size:10px; color:var(--danger);"
+          title="この画面を削除">🗑️</button>
       </td>`;
     }
     html += `<td><span class="field-badge ${fr.type}">${fr.type}</span></td>`;
@@ -978,6 +991,18 @@ function updateCaseFieldValue(caseIndex, stepNumber, fieldId, selector, value, t
 function removeTestCase(index) {
   testCases.splice(index, 1);
   renderCaseTable();
+}
+
+function removeSessionPage(stepNumber) {
+  if (!confirm(`ステップ${stepNumber}の画面を削除しますか？\nテストケースの該当ステップも削除されます。`)) return;
+  // セッションからページを除去
+  currentSession.pages = currentSession.pages.filter(p => p.stepNumber !== stepNumber);
+  // テストケースの該当ステップも除去
+  testCases.forEach(tc => {
+    tc.pageInputs = tc.pageInputs.filter(pi => pi.stepNumber !== stepNumber);
+  });
+  renderCaseTable();
+  addLog('info', `🗑️ ステップ${stepNumber}を削除しました`);
 }
 
 async function saveTestCases() {
@@ -1456,11 +1481,41 @@ function downloadLog() {
   if (filename) window.open(`/api/logs/${filename}`, '_blank');
 }
 
+async function deleteLog() {
+  const filename = document.getElementById('logFileSelect').value;
+  if (!filename) return;
+  if (!confirm(`「${filename}」を削除しますか？`)) return;
+  const res = await fetch(`/api/logs/${filename}`, { method: 'DELETE' });
+  if (res.ok) {
+    document.getElementById('logContent').textContent = 'ログを削除しました';
+    await loadLogFile();
+  } else {
+    alert('削除に失敗しました');
+  }
+}
+
 function toggleAutoRefresh(enabled) {
   clearInterval(logAutoRefreshTimer);
   if (enabled) logAutoRefreshTimer = setInterval(loadLogFile, 5000);
 }
 </script>
+
+<!-- ===== 再収集中オーバーレイ ===== -->
+<div id="collectingOverlay" style="
+  display: none; position: fixed; inset: 0; z-index: 900;
+  background: rgba(0,0,0,0.45); align-items: center; justify-content: center;
+  flex-direction: column; gap: 16px; backdrop-filter: blur(2px);">
+  <div style="
+    background: var(--surface); border: 1px solid var(--primary); border-radius: 12px;
+    padding: 24px 32px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
+    <div style="font-size: 32px; margin-bottom: 12px; animation: spin 1s linear infinite; display: inline-block;">🔄</div>
+    <div style="font-size: 16px; font-weight: 600; color: var(--primary); margin-bottom: 4px;">フィールド収集中...</div>
+    <div style="font-size: 13px; color: var(--text2);">ページの入力フィールドを解析しています</div>
+  </div>
+</div>
+<style>
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+</style>
 
 <!-- ===== 停止確認モーダル ===== -->
 <div id="stopConfirmModal" style="

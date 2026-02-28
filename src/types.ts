@@ -115,7 +115,10 @@ export type WSMessage =
   | { type: 'replay:error'; payload: { caseId?: string; message: string } }
   | { type: 'browser:navigated'; payload: { url: string; title: string } }
   | { type: 'fields:collected'; payload: { pageId: string; fields: RecordedField[] } }
-  | { type: 'log'; payload: { level: 'info' | 'warn' | 'error'; message: string } };
+  | { type: 'log'; payload: { level: 'info' | 'warn' | 'error'; message: string } }
+  | { type: 'collecting:start'; payload: Record<string, never> }
+  | { type: 'collecting:end'; payload: Record<string, never> }
+  | { type: 'replay:abort' };
 
 export interface ReplayResult {
   caseId: string;

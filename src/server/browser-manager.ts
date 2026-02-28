@@ -211,10 +211,16 @@ export class BrowserManager {
     this._collecting = true;
     this._pendingCollect = false;
 
+    // 収集開始をUIに通知
+    this.send({ type: 'collecting:start', payload: {} });
+
     try {
       await this._doCollect();
     } finally {
       this._collecting = false;
+      // 収集終了をUIに通知
+      this.send({ type: 'collecting:end', payload: {} });
+
       if (this._pendingCollect) {
         this._pendingCollect = false;
         // キューされた1回を実行（遅延して再収集）

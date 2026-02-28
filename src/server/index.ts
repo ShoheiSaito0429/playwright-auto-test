@@ -64,6 +64,13 @@ app.get('/api/logs/:filename', (req, res) => {
   res.send(fs.readFileSync(filePath, 'utf-8'));
 });
 
+app.delete('/api/logs/:filename', (req, res) => {
+  const filePath = path.resolve('data/logs', req.params.filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Not found' });
+  fs.unlinkSync(filePath);
+  res.json({ ok: true });
+});
+
 // === API: 設定 ===
 app.get('/api/settings', (_req, res) => {
   res.json(loadSettings());
