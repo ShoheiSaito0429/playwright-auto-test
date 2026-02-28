@@ -52,8 +52,6 @@ export class BrowserManager {
   // autoCollectFields の並行実行防止フラグ
   private _collecting = false;
   private _pendingCollect = false;
-  // ページ遷移発生時刻（framenavigated）: autoCollect完了時刻より早くページ境界を確定させる
-  private _lastNavMs: number = 0;
   // replay中止フラグ
   private _replayAborted = false;
 
@@ -198,8 +196,12 @@ export class BrowserManager {
     // SPA対応: URL変化を検知
     this.page.on('framenavigated', async (frame) => {
       if (!this.recording || !this.page || frame !== this.page.mainFrame()) return;
-      // ページ遷移時刻をautoCollect開始前に記録（クリック境界の正確な判定に使用）
-      this._lastNavMs = Date.now();
+      // ナビゲーション発生時刻をJSONLに即記録（autoCollect完了前に確定させる）
+      // → enrichPagesWithClickEventsでクリックの正確なページ境界として使用
+      if (this.eventsFilePath) {
+        const navEvent = { type: 'navigate', ts: Date.now(), url: this.page.url(), selector: '', text: '', tag: '' };
+        try { fs.appendFileSync(this.eventsFilePath, JSON.stringify(navEvent) + '\n', 'utf-8'); } catch {}
+      }
       await new Promise(r => setTimeout(r, 1000));
       await this.autoCollectFields();
     });
@@ -345,10 +347,7 @@ export class BrowserManager {
 
       this.stepCounter++;
       const pageId = uuid();
-      // recordedAtMsはautoCollect完了時刻ではなく、ページ遷移発生時刻を使う
-      // これにより「遷移後のページでのクリック」が前ページウィンドウに誤入しない
-      const nowMs = this._lastNavMs > 0 ? this._lastNavMs : Date.now();
-      this._lastNavMs = 0; // 使用済みリセット
+      const nowMs = Date.now();
 
       const recordedPage: RecordedPage = {
         id: pageId,
@@ -491,10 +490,10 @@ export class BrowserManager {
       return;
     }
 
-    let clickEvents: ClickEvent[] = [];
+    let allEvents: ClickEvent[] = [];
     try {
       const lines = fs.readFileSync(this.eventsFilePath, 'utf-8').split('\n').filter(Boolean);
-      clickEvents = lines
+      allEvents = lines
         .map(l => { try { return JSON.parse(l) as ClickEvent; } catch { return null; } })
         .filter((e): e is ClickEvent => e !== null);
     } catch (e: any) {
@@ -502,59 +501,96 @@ export class BrowserManager {
       return;
     }
 
+    // navigate イベントとclick イベントに分離
+    const navigateEvents = allEvents.filter(e => e.type === 'navigate').sort((a, b) => a.ts - b.ts);
+    const rawClickEvents = allEvents.filter(e => !e.type || e.type === 'click').sort((a, b) => a.ts - b.ts);
+
     // 重複排除: addInitScript と install-watcher の両方がリスナーを持つため
     // 同一セレクタが100ms以内に連続で記録される → 1件に統合
-    const deduped: ClickEvent[] = [];
-    for (const e of clickEvents) {
-      const last = deduped[deduped.length - 1];
+    const clickEvents: ClickEvent[] = [];
+    for (const e of rawClickEvents) {
+      const last = clickEvents[clickEvents.length - 1];
       if (last && last.selector === e.selector && e.ts - last.ts < 100) continue;
-      deduped.push(e);
+      clickEvents.push(e);
     }
-    clickEvents = deduped;
 
-    this.log('info', `📊 クリックイベント総数: ${clickEvents.length}`);
+    this.log('info', `📊 クリックイベント総数: ${clickEvents.length} (ナビゲートイベント: ${navigateEvents.length}件)`);
     if (clickEvents.length === 0) return;
 
-    // ページをrecordedAtMs順にソート
-    const sortedPages = [...this.session!.pages].sort((a, b) =>
-      (a.recordedAtMs || 0) - (b.recordedAtMs || 0)
-    );
+    // ページをstepNumber順にソート
+    const sortedPages = [...this.session!.pages].sort((a, b) => a.stepNumber - b.stepNumber);
 
-    // 正しいロジック:
-    // 「ページN-1が収集されてからページNが収集されるまでのクリック」
-    //   → 最後のクリック = ページN-1のsubmitSelector（ページNへ遷移したボタン）
-    //   → それ以前 = ページN-1のpreClicks（モーダルを開く等の事前操作）
-    for (let i = 0; i < sortedPages.length; i++) {
-      const page = sortedPages[i];
-      const prevPage = i > 0 ? sortedPages[i - 1] : null;
+    // URL パス取得ヘルパー
+    const getPath = (url: string) => { try { return new URL(url).pathname; } catch { return url; } };
 
-      // 前のページが収集された時刻 〜 このページが収集される時刻 のクリック
-      const prevCollectedMs = prevPage?.recordedAtMs || 0;
-      const thisCollectedMs = page.recordedAtMs || 0;
+    if (navigateEvents.length > 0) {
+      // ===== ナビゲートイベント方式（精度高） =====
+      // navigateイベントをウィンドウとして使い、各ページに対応するウィンドウを特定する
+      // ウィンドウ[nav_i, nav_{i+1})にあるクリック = nav_i.urlのページでのクリック
+      //   → 最後のクリック = そのページのsubmitSelector（次ページへ遷移したボタン）
+      //   → それ以前 = preClicks（モーダルを開く等の事前操作）
 
-      const clicksToReachThis = clickEvents.filter(e =>
-        e.ts > prevCollectedMs && e.ts <= thisCollectedMs
-      );
+      // URL別ページ一覧（同じURLが複数ある場合に順番で対応）
+      const pagesByPath = new Map<string, RecordedPage[]>();
+      for (const page of sortedPages) {
+        const path = getPath(page.url);
+        if (!pagesByPath.has(path)) pagesByPath.set(path, []);
+        pagesByPath.get(path)!.push(page);
+      }
+      const pagePathCounters = new Map<string, number>();
 
-      if (clicksToReachThis.length === 0) continue;
+      for (let i = 0; i < navigateEvents.length; i++) {
+        const nav = navigateEvents[i];
+        const nextNav = navigateEvents[i + 1];
+        const windowStart = nav.ts;
+        const windowEnd = nextNav?.ts ?? (Date.now() + 1e9);
 
-      if (prevPage) {
-        // 最後のクリック → 前のページのsubmitSelector（このページへ遷移させたボタン）
-        const lastClick = clicksToReachThis[clicksToReachThis.length - 1];
-        prevPage.submitSelector = lastClick.selector;
-        prevPage.submitText = lastClick.text;
-        this.log('info', `  ステップ${prevPage.stepNumber} submitSelector: "${lastClick.text}" (${lastClick.selector})`);
+        // このナビゲートウィンドウに対応するページを検索
+        const navPath = getPath(nav.url);
+        const pagesAtPath = pagesByPath.get(navPath) || [];
+        const pIdx = pagePathCounters.get(navPath) || 0;
+        const page = pagesAtPath[pIdx];
+        if (!page) continue; // このURLにはページが記録されていない（中間ページ）→ スキップ
+        pagePathCounters.set(navPath, pIdx + 1);
 
-        // それ以前 → 前のページのpreClicks（モーダルを開く等）
-        if (clicksToReachThis.length > 1) {
-          if (!prevPage.preClicks) prevPage.preClicks = [];
-          prevPage.preClicks.push(...clicksToReachThis.slice(0, -1).map(e => ({ selector: e.selector, text: e.text })));
-          this.log('info', `  ステップ${prevPage.stepNumber} preClicks: ${prevPage.preClicks.length}件`);
+        // このウィンドウ内のクリック = このページでのユーザー操作
+        const windowClicks = clickEvents.filter(e => e.ts >= windowStart && e.ts < windowEnd);
+        if (windowClicks.length === 0) continue;
+
+        const lastClick = windowClicks[windowClicks.length - 1];
+        page.submitSelector = lastClick.selector;
+        page.submitText = lastClick.text;
+        this.log('info', `  ステップ${page.stepNumber} submitSelector: "${lastClick.text}" (${lastClick.selector})`);
+
+        if (windowClicks.length > 1) {
+          page.preClicks = windowClicks.slice(0, -1).map(e => ({ selector: e.selector, text: e.text }));
+          this.log('info', `  ステップ${page.stepNumber} preClicks: ${page.preClicks.length}件`);
+          for (const pc of page.preClicks) {
+            this.log('info', `    └ preClick: "${pc.text}" (${pc.selector})`);
+          }
         }
-      } else {
-        // 最初のページへのクリック（ページ1に到達する前の操作）
-        page.preClicks = clicksToReachThis.map(e => ({ selector: e.selector, text: e.text }));
-        this.log('info', `  ステップ${page.stepNumber} 初期preClicks: ${page.preClicks.length}件`);
+      }
+    } else {
+      // ===== フォールバック: recordedAtMs方式（ナビゲートイベントがない旧記録用） =====
+      this.log('warn', 'ナビゲートイベントなし → recordedAtMs方式にフォールバック');
+      for (let i = 0; i < sortedPages.length; i++) {
+        const page = sortedPages[i];
+        const prevPage = i > 0 ? sortedPages[i - 1] : null;
+        const prevMs = prevPage?.recordedAtMs || 0;
+        const thisMs = page.recordedAtMs || 0;
+        const clicksToReachThis = clickEvents.filter(e => e.ts > prevMs && e.ts <= thisMs);
+        if (clicksToReachThis.length === 0) continue;
+        if (prevPage) {
+          const last = clicksToReachThis[clicksToReachThis.length - 1];
+          prevPage.submitSelector = last.selector;
+          prevPage.submitText = last.text;
+          if (clicksToReachThis.length > 1) {
+            if (!prevPage.preClicks) prevPage.preClicks = [];
+            prevPage.preClicks.push(...clicksToReachThis.slice(0, -1).map(e => ({ selector: e.selector, text: e.text })));
+          }
+        } else {
+          page.preClicks = clicksToReachThis.map(e => ({ selector: e.selector, text: e.text }));
+        }
       }
     }
 

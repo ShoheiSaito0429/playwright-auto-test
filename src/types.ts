@@ -35,6 +35,7 @@ export interface PreClick {
 }
 
 export interface ClickEvent {
+  type?: 'click' | 'navigate';  // 省略時は'click'
   ts: number;       // Date.now() ミリ秒
   url: string;      // クリック時のURL
   selector: string;
