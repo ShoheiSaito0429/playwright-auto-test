@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 chcp 65001 > nul
 echo ========================================
-echo   Playwright Auto Test v2.4.0
+echo   Playwright Auto Test v2.8.0
 echo ========================================
 echo.
 if not exist "node_modules" (

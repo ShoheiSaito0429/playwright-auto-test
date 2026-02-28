@@ -813,22 +813,49 @@ export class BrowserManager {
           });
 
           // preClicks: モーダル閉じなど事前クリックが必要な場合に実行
+          // 各preClick後にその時点で表示されたフィールドを即座に入力する
+          // （モーダル内フィールドはモーダルが開いた後でないと入力できないため）
+          const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
+          const alreadyFilledIds = new Set<string>();
+
+          const tryFillVisibleFields = async (label: string) => {
+            for (const field of fieldsToFill) {
+              if (alreadyFilledIds.has(field.fieldId)) continue;
+              try {
+                const isAccessible = await page.evaluate((sel: string) => {
+                  const el = document.querySelector(sel);
+                  if (!el) return false;
+                  const style = window.getComputedStyle(el);
+                  return style.display !== 'none' && style.visibility !== 'hidden' && !(el as HTMLInputElement).disabled;
+                }, field.selector).catch(() => false);
+
+                if (isAccessible) {
+                  const displayValue = field.type === 'password' ? '****' : field.value;
+                  await inputHandler.fillField(page, field);
+                  alreadyFilledIds.add(field.fieldId);
+                  this.log('info', `[${testCase.caseId}] ✅ 入力(${label}後): [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
+                  await page.waitForTimeout(100);
+                }
+              } catch { /* このフィールドは後で再試行 */ }
+            }
+          };
+
           const preClicks = sessionPage?.preClicks;
           if (preClicks && preClicks.length > 0) {
             this.log('info', `[${testCase.caseId}] 🖱️ preClicks実行: ${preClicks.length}件`);
             for (const preClick of preClicks) {
               await executePreClick(preClick);
+              // preClick後に表示されたフィールドをその場で入力
+              await tryFillVisibleFields(`preClick "${preClick.text}"`);
             }
           }
 
           // 入力前キャプチャ
           await this.takeScreenshot(page, nextSsPath(), `${testCase.caseId} step${pageInput.stepNumber} before`, screenshots);
-
-          // 入力
-          const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
-          this.log('info', `[${testCase.caseId}] ステップ${pageInput.stepNumber}: ${fieldsToFill.length}個のフィールドを入力 (URL: ${page.url()})`);
+          const remainingFields = fieldsToFill.filter(f => !alreadyFilledIds.has(f.fieldId));
+          this.log('info', `[${testCase.caseId}] ステップ${pageInput.stepNumber}: ${remainingFields.length}個のフィールドを入力 (preClick後入力済み: ${alreadyFilledIds.size}件, URL: ${page.url()})`);
           let navigationDetected = false;
-          for (const field of fieldsToFill) {
+          for (const field of remainingFields) {
             if (navigationDetected) break; // ページ遷移後は残フィールドをスキップ
 
             const displayValue = field.type === 'password' ? '****' : field.value;
