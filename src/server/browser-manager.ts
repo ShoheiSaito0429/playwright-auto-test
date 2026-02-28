@@ -212,15 +212,31 @@ export class BrowserManager {
     this._collecting = true;
     this._pendingCollect = false;
 
-    // 収集開始をUIに通知
+    // 収集開始: GUIとブラウザ両方に通知
     this.send({ type: 'collecting:start', payload: {} });
+    if (this.page && !this.page.isClosed()) {
+      this.page.evaluate(() => {
+        if (!document.getElementById('__pw_collecting')) {
+          const el = document.createElement('div');
+          el.id = '__pw_collecting';
+          el.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;background:rgba(99,102,241,0.92);color:#fff;padding:8px 16px;border-radius:8px;font-size:14px;font-family:sans-serif;font-weight:600;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,0.3);';
+          el.textContent = '🔄 フィールド収集中...';
+          document.body.appendChild(el);
+        }
+      }).catch(() => {});
+    }
 
     try {
       await this._doCollect();
     } finally {
       this._collecting = false;
-      // 収集終了をUIに通知
+      // 収集終了: GUIとブラウザ両方から削除
       this.send({ type: 'collecting:end', payload: {} });
+      if (this.page && !this.page.isClosed()) {
+        this.page.evaluate(() => {
+          document.getElementById('__pw_collecting')?.remove();
+        }).catch(() => {});
+      }
 
       if (this._pendingCollect) {
         this._pendingCollect = false;
@@ -452,35 +468,41 @@ export class BrowserManager {
       (a.recordedAtMs || 0) - (b.recordedAtMs || 0)
     );
 
+    // 正しいロジック:
+    // 「ページN-1が収集されてからページNが収集されるまでのクリック」
+    //   → 最後のクリック = ページN-1のsubmitSelector（ページNへ遷移したボタン）
+    //   → それ以前 = ページN-1のpreClicks（モーダルを開く等の事前操作）
     for (let i = 0; i < sortedPages.length; i++) {
       const page = sortedPages[i];
-      const nextPage = sortedPages[i + 1];
+      const prevPage = i > 0 ? sortedPages[i - 1] : null;
 
-      // このページが収集された後、次のページが収集されるまでのクリックを取得
-      const pageCollectedMs = page.recordedAtMs || 0;
-      const nextPageCollectedMs = nextPage?.recordedAtMs || Date.now();
+      // 前のページが収集された時刻 〜 このページが収集される時刻 のクリック
+      const prevCollectedMs = prevPage?.recordedAtMs || 0;
+      const thisCollectedMs = page.recordedAtMs || 0;
 
-      const pageClicks = clickEvents.filter(e =>
-        e.ts >= pageCollectedMs && e.ts < nextPageCollectedMs
+      const clicksToReachThis = clickEvents.filter(e =>
+        e.ts > prevCollectedMs && e.ts <= thisCollectedMs
       );
 
-      if (pageClicks.length === 0) continue;
+      if (clicksToReachThis.length === 0) continue;
 
-      if (nextPage) {
-        // 最後のクリック → submitSelector（ページ遷移を起こしたボタン）
-        const lastClick = pageClicks[pageClicks.length - 1];
-        page.submitSelector = lastClick.selector;
-        page.submitText = lastClick.text;
-        this.log('info', `  ステップ${page.stepNumber} submitSelector: "${lastClick.text}" (${lastClick.selector})`);
+      if (prevPage) {
+        // 最後のクリック → 前のページのsubmitSelector（このページへ遷移させたボタン）
+        const lastClick = clicksToReachThis[clicksToReachThis.length - 1];
+        prevPage.submitSelector = lastClick.selector;
+        prevPage.submitText = lastClick.text;
+        this.log('info', `  ステップ${prevPage.stepNumber} submitSelector: "${lastClick.text}" (${lastClick.selector})`);
 
-        // それ以前のクリック → preClicks（モーダル操作など）
-        if (pageClicks.length > 1) {
-          page.preClicks = pageClicks.slice(0, -1).map(e => ({ selector: e.selector, text: e.text }));
-          this.log('info', `  ステップ${page.stepNumber} preClicks: ${page.preClicks.length}件`);
+        // それ以前 → 前のページのpreClicks（モーダルを開く等）
+        if (clicksToReachThis.length > 1) {
+          if (!prevPage.preClicks) prevPage.preClicks = [];
+          prevPage.preClicks.push(...clicksToReachThis.slice(0, -1).map(e => ({ selector: e.selector, text: e.text })));
+          this.log('info', `  ステップ${prevPage.stepNumber} preClicks: ${prevPage.preClicks.length}件`);
         }
       } else {
-        // 最後のページ: 全クリックをpreClickとして保存
-        page.preClicks = pageClicks.map(e => ({ selector: e.selector, text: e.text }));
+        // 最初のページへのクリック（ページ1に到達する前の操作）
+        page.preClicks = clicksToReachThis.map(e => ({ selector: e.selector, text: e.text }));
+        this.log('info', `  ステップ${page.stepNumber} 初期preClicks: ${page.preClicks.length}件`);
       }
     }
 

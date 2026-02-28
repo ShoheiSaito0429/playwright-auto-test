@@ -44,6 +44,14 @@
     return false;
   };
 
+  // ラジオ・チェックボックス変更後に再収集（選択値を確実に取得するため）
+  document.addEventListener('change', (e) => {
+    const el = e.target;
+    if (el.type === 'radio' || el.type === 'checkbox' || el.tagName === 'SELECT') {
+      notify();
+    }
+  }, true);
+
   // 全クリックイベントをキャプチャ → console.logでNode.js側に送信
   document.addEventListener('click', (e) => {
     let el = e.target;

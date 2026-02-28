@@ -1479,15 +1479,17 @@ function toggleAutoRefresh(enabled) {
 
 <!-- ===== 再収集中オーバーレイ ===== -->
 <div id="collectingOverlay" style="
-  display: none; position: fixed; inset: 0; z-index: 900;
-  background: rgba(0,0,0,0.45); align-items: center; justify-content: center;
-  flex-direction: column; gap: 16px; backdrop-filter: blur(2px);">
+  display: none; position: fixed; bottom: 24px; right: 24px; z-index: 900;
+  pointer-events: none;">
   <div style="
-    background: var(--surface); border: 1px solid var(--primary); border-radius: 12px;
-    padding: 24px 32px; text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
-    <div style="font-size: 32px; margin-bottom: 12px; animation: spin 1s linear infinite; display: inline-block;">🔄</div>
-    <div style="font-size: 16px; font-weight: 600; color: var(--primary); margin-bottom: 4px;">フィールド収集中...</div>
-    <div style="font-size: 13px; color: var(--text2);">ページの入力フィールドを解析しています</div>
+    background: var(--surface); border: 2px solid var(--primary); border-radius: 10px;
+    padding: 12px 20px; display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);">
+    <div style="font-size: 20px; animation: spin 1s linear infinite; display: inline-block;">🔄</div>
+    <div>
+      <div style="font-size: 14px; font-weight: 600; color: var(--primary);">フィールド収集中...</div>
+      <div style="font-size: 11px; color: var(--text2);">記録ブラウザにも表示されています</div>
+    </div>
   </div>
 </div>
 <style>
