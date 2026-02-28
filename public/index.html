@@ -298,7 +298,12 @@
       
       <!-- 実行進捗 -->
       <div class="card" id="replayProgress" style="display:none;">
-        <h2>📊 実行状況</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <h2 style="margin: 0;">📊 実行状況</h2>
+          <button class="btn btn-danger" id="btnAbortReplay" onclick="abortReplay()" style="padding: 6px 16px; font-size: 13px;">
+            ⏹ 中止
+          </button>
+        </div>
         <div class="progress-bar" style="margin-bottom: 12px;">
           <div class="fill" id="replayProgressFill" style="width: 0%"></div>
         </div>
@@ -554,6 +559,17 @@ async function stopRecording() {
   await doStopRecording(true);
 }
 
+// 録画を保存せず破棄
+function discardRecording() {
+  document.getElementById('stopConfirmModal').style.display = 'none';
+  sendWS({ type: 'recording:stop' });
+  isRecording = false;
+  collectedPages = [];
+  currentSession = null;
+  updateRecordingUI();
+  addLog('info', '🚫 録画を破棄しました（保存なし）');
+}
+
 async function doStopRecording(keepLastPage) {
   document.getElementById('stopConfirmModal').style.display = 'none';
 
@@ -736,11 +752,24 @@ async function loadSession() {
 }
 
 function autoGenerateTestCase(session) {
+  // 可視フィールドがあるページだけを含める
+  const validPages = session.pages.filter(p => {
+    const visibleFields = (p.fields || []).filter(f => f.state === 'active' || f.isVisible);
+    return visibleFields.length > 0 || (p.preClicks && p.preClicks.length > 0);
+  });
+
+  if (validPages.length === 0) {
+    addLog('warn', '⚠️ 入力可能なフィールドがないため、テストケースは生成しませんでした');
+    testCases = [];
+    renderCaseTable();
+    return;
+  }
+
   const tc = {
     caseId: 'CASE_001',
     caseName: '記録時の入力値',
     enabled: true,
-    pageInputs: session.pages.map(p => ({
+    pageInputs: validPages.map(p => ({
       stepNumber: p.stepNumber,
       pageId: p.id,
       submitSelector: p.submitSelector || '',
@@ -755,6 +784,7 @@ function autoGenerateTestCase(session) {
     })),
   };
   testCases = [tc];
+  addLog('info', `📝 ${validPages.length}ステップのテストケースを生成`);
   renderCaseTable();
 }
 
@@ -1193,6 +1223,14 @@ function updateSelectAllState() {
   }
 }
 
+// 再生を中止
+function abortReplay() {
+  sendWS({ type: 'replay:abort' });
+  addLog('warn', '⏹ 再生を中止しました');
+  document.getElementById('replayProgress').style.display = 'none';
+  document.getElementById('btnStartReplay').disabled = false;
+}
+
 async function startReplay() {
   document.getElementById('replayProgress').style.display = '';
   document.getElementById('replayResults').innerHTML = '';
@@ -1455,15 +1493,21 @@ function toggleAutoRefresh(enabled) {
       </button>
       <button onclick="doStopRecording(false)" style="
         flex: 1; padding: 12px; border-radius: 8px; border: none; cursor: pointer;
-        background: var(--danger, #ef4444); color: #fff; font-size: 14px; font-weight: 600;">
-        🗑️ 削除して終了
+        background: var(--warning, #f59e0b); color: #fff; font-size: 14px; font-weight: 600;">
+        🗑️ 最後を削除
       </button>
     </div>
+    <button onclick="discardRecording()" style="
+      width: 100%; margin-top: 10px; padding: 10px; border-radius: 8px;
+      border: none; background: var(--danger, #ef4444); cursor: pointer;
+      font-size: 13px; color: #fff; font-weight: 600;">
+      🚫 保存せず終了（録画を破棄）
+    </button>
     <button onclick="document.getElementById('stopConfirmModal').style.display='none'" style="
-      width: 100%; margin-top: 10px; padding: 8px; border-radius: 8px;
+      width: 100%; margin-top: 8px; padding: 8px; border-radius: 8px;
       border: 1px solid var(--border); background: transparent; cursor: pointer;
       font-size: 13px; color: var(--text2);">
-      キャンセル
+      キャンセル（録画を続ける）
     </button>
   </div>
 </div>

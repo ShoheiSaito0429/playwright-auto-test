@@ -53,6 +53,8 @@ export class BrowserManager {
   // autoCollectFields の並行実行防止フラグ
   private _collecting = false;
   private _pendingCollect = false;
+  // replay中止フラグ
+  private _replayAborted = false;
 
   constructor(settings: Settings, send: SendFn) {
     this.settings = settings;
@@ -621,6 +623,12 @@ export class BrowserManager {
   // ===== 再生モード =====
   // ログイン画面もステップ1として扱う。全画面同じロジックで入力→送信を繰り返す。
 
+  // 再生を中止
+  abortReplay(): void {
+    this._replayAborted = true;
+    this.log('warn', '⏹ 再生中止リクエストを受信');
+  }
+
   // 通常モード用ラッパー（単一セッション）
   async startReplay(session: RecordingSession, testCases: TestCase[]): Promise<void> {
     const enabledCases = testCases.filter(c => c.enabled);
@@ -629,6 +637,7 @@ export class BrowserManager {
 
   // マージモード用: 複数セッションのテストケースを実行
   async startReplaySuite(items: { session: RecordingSession; testCase: TestCase }[]): Promise<void> {
+    this._replayAborted = false;  // 中止フラグをリセット
     const inputHandler = new InputHandler();
     const results: ReplayResult[] = [];
 
@@ -636,6 +645,11 @@ export class BrowserManager {
     this.log('info', `${items.length}件のテストケースを実行します`);
 
     for (const { session, testCase } of items) {
+      // 中止チェック
+      if (this._replayAborted) {
+        this.log('warn', '⏹ 再生が中止されました');
+        break;
+      }
       const startTime = Date.now();
       const screenshotDir = path.resolve('data/screenshots', `${testCase.caseId}_${timestamp()}`);
       fs.mkdirSync(screenshotDir, { recursive: true });

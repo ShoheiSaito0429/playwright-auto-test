@@ -364,6 +364,10 @@ wss.on('connection', (ws: WebSocket) => {
           await browserManager.stopRecording(pages);
           break;
         }
+        case 'replay:abort': {
+          browserManager.abortReplay();
+          break;
+        }
         case 'replay:start': {
           settings = loadSettings();
           const { sessionId, caseIds, items } = msg.payload;
