@@ -87,7 +87,41 @@ export class InputHandler {
 
     const specificSelector = `${selector}[value="${value}"]`;
 
-    // --- JS経由で確実に選択（カスタムUIサイト対応） ---
+    // ラジオボタンのIDを取得（ラベルクリック用）
+    const radioId = await page.evaluate((sel: string) => {
+      const el = document.querySelector(sel) as HTMLInputElement | null;
+      return el?.id || null;
+    }, specificSelector).catch(() => null);
+
+    // ① まずPlaywrightで可視ラベルをクリック（カスタムUIの視覚的状態を更新するのに最も確実）
+    let labelClicked = false;
+    if (radioId) {
+      const labelSel = `label[for="${radioId}"]`;
+      const labelCount = await page.locator(labelSel).count().catch(() => 0);
+      if (labelCount > 0) {
+        try {
+          // 可視の場合はPlaywright実クリック（マウスイベント座標付き）
+          await page.locator(labelSel).first().click({ timeout: 2000 });
+          labelClicked = true;
+        } catch {
+          // 非表示の場合はforce click
+          try {
+            await page.locator(labelSel).first().click({ force: true, timeout: 1000 });
+            labelClicked = true;
+          } catch { /* ラベルクリック失敗 */ }
+        }
+      }
+    }
+
+    // ラベルクリックが成功した場合でも、checkedを確認してからJS補完
+    const afterLabelCheck = radioId ? await page.evaluate((sel: string) => {
+      const el = document.querySelector(sel) as HTMLInputElement | null;
+      return el?.checked ?? false;
+    }, specificSelector).catch(() => false) : false;
+
+    if (labelClicked && afterLabelCheck) return; // ラベルクリックで完結
+
+    // ② JS経由でchecked + イベント発火（フォールバック・補完）
     const jsResult = await page.evaluate(({ sel, val, groupSel }) => {
       // 値指定で検索
       let radio = document.querySelector(sel) as HTMLInputElement | null;
@@ -113,7 +147,7 @@ export class InputHandler {
         radio!.dispatchEvent(evt);
       });
 
-      // 関連ラベルもクリック（スタイル変更用のJSトリガー）
+      // 関連ラベルもJSクリック（スタイル変更用のJSトリガー）
       const id = radio.id;
       const label = id
         ? document.querySelector(`label[for="${id}"]`) as HTMLElement | null
@@ -128,14 +162,14 @@ export class InputHandler {
 
     if (jsResult.ok) return;
 
-    // JS経由で失敗した場合は Playwright の click fallback
+    // ③ 最終手段: Playwright check/click
     const locator = page.locator(specificSelector).first();
     if (await locator.count() > 0) {
       try { await locator.check({ force: true }); return; } catch { /* fall through */ }
       try { await locator.click({ force: true }); return; } catch { /* fall through */ }
     }
 
-    // 最終手段: グループ先頭
+    // グループ先頭
     await page.locator(selector).first().click({ force: true }).catch(() => {});
   }
 
@@ -237,14 +271,19 @@ export class InputHandler {
         fieldset.disabled = false;
       }
       // display:none の場合は表示する
-      const style = getComputedStyle(el);
-      if (style.display === 'none') {
-        (el as HTMLElement).style.display = '';
-      }
-      // 親要素が非表示の場合（1階層のみ対応）
-      const parent = el.parentElement;
-      if (parent && getComputedStyle(parent).display === 'none') {
-        parent.style.display = '';
+      // ただし radio/checkbox はカスタムUIで意図的に隠されている場合があるためスキップ
+      const inputType = (el as HTMLInputElement).type;
+      const isCustomUiInput = inputType === 'radio' || inputType === 'checkbox';
+      if (!isCustomUiInput) {
+        const style = getComputedStyle(el);
+        if (style.display === 'none') {
+          (el as HTMLElement).style.display = '';
+        }
+        // 親要素が非表示の場合（1階層のみ対応）
+        const parent = el.parentElement;
+        if (parent && getComputedStyle(parent).display === 'none') {
+          parent.style.display = '';
+        }
       }
       // readonly を解除
       if ((el as HTMLInputElement).readOnly) {

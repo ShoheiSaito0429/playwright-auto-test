@@ -816,25 +816,45 @@ export class BrowserManager {
           // 各preClick後にその時点で表示されたフィールドを即座に入力する
           // （モーダル内フィールドはモーダルが開いた後でないと入力できないため）
           const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
-          const alreadyFilledIds = new Set<string>();
+          // filledIds: フィールドが確実に入力済みかを追跡（ラジオは目視確認で判定）
+          const filledIds = new Set<string>();
 
-          const tryFillVisibleFields = async (label: string) => {
+          const tryFillFields = async (label: string) => {
             for (const field of fieldsToFill) {
-              if (alreadyFilledIds.has(field.fieldId)) continue;
+              if (filledIds.has(field.fieldId)) continue;
               try {
-                const isAccessible = await page.evaluate((sel: string) => {
-                  const el = document.querySelector(sel);
-                  if (!el) return false;
-                  const style = window.getComputedStyle(el);
-                  return style.display !== 'none' && style.visibility !== 'hidden' && !(el as HTMLInputElement).disabled;
-                }, field.selector).catch(() => false);
+                // ラジオ/チェックボックスはCSSで非表示が多い（カスタムUI）→ 可視チェックせず試行
+                // テキスト/セレクト系は存在チェックのみ
+                const isRadioOrCheckbox = field.type === 'radio' || field.type === 'checkbox';
+                const shouldTry = isRadioOrCheckbox
+                  ? await page.evaluate((sel: string) => !!document.querySelector(sel), field.selector).catch(() => false)
+                  : await page.evaluate((sel: string) => {
+                      const el = document.querySelector(sel);
+                      if (!el) return false;
+                      const style = window.getComputedStyle(el);
+                      return style.display !== 'none' && style.visibility !== 'hidden';
+                    }, field.selector).catch(() => false);
 
-                if (isAccessible) {
-                  const displayValue = field.type === 'password' ? '****' : field.value;
-                  await inputHandler.fillField(page, field);
-                  alreadyFilledIds.add(field.fieldId);
-                  this.log('info', `[${testCase.caseId}] ✅ 入力(${label}後): [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
-                  await page.waitForTimeout(100);
+                if (!shouldTry) continue;
+
+                const displayValue = field.type === 'password' ? '****' : field.value;
+                await inputHandler.fillField(page, field);
+                this.log('info', `[${testCase.caseId}] ✅ 入力試行(${label}): [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
+                await page.waitForTimeout(150);
+
+                // ラジオは実際にcheckedになったか確認してからfilledとマーク
+                if (field.type === 'radio') {
+                  const isChecked = await page.evaluate(({ sel, val }: { sel: string; val: string }) => {
+                    const specific = document.querySelector(`${sel}[value="${val}"]`) as HTMLInputElement | null;
+                    return specific?.checked ?? false;
+                  }, { sel: field.selector, val: field.value }).catch(() => false);
+                  if (isChecked) {
+                    filledIds.add(field.fieldId);
+                    this.log('info', `[${testCase.caseId}] ✅ ラジオ選択確認: ${field.selector}[value="${field.value}"]`);
+                  }
+                  // checkedでなければ次のpreClick後に再試行
+                } else {
+                  filledIds.add(field.fieldId);
                 }
               } catch { /* このフィールドは後で再試行 */ }
             }
@@ -846,14 +866,15 @@ export class BrowserManager {
             for (const preClick of preClicks) {
               await executePreClick(preClick);
               // preClick後に表示されたフィールドをその場で入力
-              await tryFillVisibleFields(`preClick "${preClick.text}"`);
+              // ラジオボタンはモーダルが開いた後に再試行されるため毎回試みる
+              await tryFillFields(`preClick "${preClick.text}"`);
             }
           }
 
           // 入力前キャプチャ
           await this.takeScreenshot(page, nextSsPath(), `${testCase.caseId} step${pageInput.stepNumber} before`, screenshots);
-          const remainingFields = fieldsToFill.filter(f => !alreadyFilledIds.has(f.fieldId));
-          this.log('info', `[${testCase.caseId}] ステップ${pageInput.stepNumber}: ${remainingFields.length}個のフィールドを入力 (preClick後入力済み: ${alreadyFilledIds.size}件, URL: ${page.url()})`);
+          const remainingFields = fieldsToFill.filter(f => !filledIds.has(f.fieldId));
+          this.log('info', `[${testCase.caseId}] ステップ${pageInput.stepNumber}: ${remainingFields.length}個のフィールドを入力 (preClick後入力済み: ${filledIds.size}件, URL: ${page.url()})`);
           let navigationDetected = false;
           for (const field of remainingFields) {
             if (navigationDetected) break; // ページ遷移後は残フィールドをスキップ
