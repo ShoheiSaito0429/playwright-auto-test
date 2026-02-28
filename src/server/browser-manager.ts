@@ -812,69 +812,33 @@ export class BrowserManager {
             },
           });
 
-          // preClicks: モーダル閉じなど事前クリックが必要な場合に実行
-          // 各preClick後にその時点で表示されたフィールドを即座に入力する
-          // （モーダル内フィールドはモーダルが開いた後でないと入力できないため）
-          const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
-          // filledIds: フィールドが確実に入力済みかを追跡（ラジオは目視確認で判定）
-          const filledIds = new Set<string>();
+          // ===== レコーディング通りの順序で実行 =====
+          // 録画時: プリクリック(opener) → フィールド入力 → プリクリック(submitter) → submit
+          // 最後のpreClickの前にフィールドを入力することで、モーダル内フィールドにも対応
+          const allPreClicks = sessionPage?.preClicks ?? [];
+          // 2件以上なら最後のpreClickをフィールド入力「後」に実行（モーダル送信ボタン等）
+          // 1件以下なら全てフィールド入力「前」に実行（opener系）
+          const preClicksBeforeFill = allPreClicks.length > 1
+            ? allPreClicks.slice(0, -1)
+            : allPreClicks;
+          const submitPreClick = allPreClicks.length > 1
+            ? allPreClicks[allPreClicks.length - 1]
+            : null;
 
-          const tryFillFields = async (label: string) => {
-            for (const field of fieldsToFill) {
-              if (filledIds.has(field.fieldId)) continue;
-              try {
-                // ラジオ/チェックボックスはCSSで非表示が多い（カスタムUI）→ 可視チェックせず試行
-                // テキスト/セレクト系は存在チェックのみ
-                const isRadioOrCheckbox = field.type === 'radio' || field.type === 'checkbox';
-                const shouldTry = isRadioOrCheckbox
-                  ? await page.evaluate((sel: string) => !!document.querySelector(sel), field.selector).catch(() => false)
-                  : await page.evaluate((sel: string) => {
-                      const el = document.querySelector(sel);
-                      if (!el) return false;
-                      const style = window.getComputedStyle(el);
-                      return style.display !== 'none' && style.visibility !== 'hidden';
-                    }, field.selector).catch(() => false);
-
-                if (!shouldTry) continue;
-
-                const displayValue = field.type === 'password' ? '****' : field.value;
-                await inputHandler.fillField(page, field);
-                this.log('info', `[${testCase.caseId}] ✅ 入力試行(${label}): [${field.type}] ${field.label || field.selector} = "${displayValue}"`);
-                await page.waitForTimeout(150);
-
-                // ラジオは実際にcheckedになったか確認してからfilledとマーク
-                if (field.type === 'radio') {
-                  const isChecked = await page.evaluate(({ sel, val }: { sel: string; val: string }) => {
-                    const specific = document.querySelector(`${sel}[value="${val}"]`) as HTMLInputElement | null;
-                    return specific?.checked ?? false;
-                  }, { sel: field.selector, val: field.value }).catch(() => false);
-                  if (isChecked) {
-                    filledIds.add(field.fieldId);
-                    this.log('info', `[${testCase.caseId}] ✅ ラジオ選択確認: ${field.selector}[value="${field.value}"]`);
-                  }
-                  // checkedでなければ次のpreClick後に再試行
-                } else {
-                  filledIds.add(field.fieldId);
-                }
-              } catch { /* このフィールドは後で再試行 */ }
-            }
-          };
-
-          const preClicks = sessionPage?.preClicks;
-          if (preClicks && preClicks.length > 0) {
-            this.log('info', `[${testCase.caseId}] 🖱️ preClicks実行: ${preClicks.length}件`);
-            for (const preClick of preClicks) {
+          // フィールド入力「前」のpreClicks（モーダルを開くなど）
+          if (preClicksBeforeFill.length > 0) {
+            this.log('info', `[${testCase.caseId}] 🖱️ preClicks実行(入力前): ${preClicksBeforeFill.length}件`);
+            for (const preClick of preClicksBeforeFill) {
               await executePreClick(preClick);
-              // preClick後に表示されたフィールドをその場で入力
-              // ラジオボタンはモーダルが開いた後に再試行されるため毎回試みる
-              await tryFillFields(`preClick "${preClick.text}"`);
             }
           }
 
+          const fieldsToFill = pageInput.fieldValues.filter(f => f.value !== '');
+
           // 入力前キャプチャ
           await this.takeScreenshot(page, nextSsPath(), `${testCase.caseId} step${pageInput.stepNumber} before`, screenshots);
-          const remainingFields = fieldsToFill.filter(f => !filledIds.has(f.fieldId));
-          this.log('info', `[${testCase.caseId}] ステップ${pageInput.stepNumber}: ${remainingFields.length}個のフィールドを入力 (preClick後入力済み: ${filledIds.size}件, URL: ${page.url()})`);
+          const remainingFields = fieldsToFill;
+          this.log('info', `[${testCase.caseId}] ステップ${pageInput.stepNumber}: ${remainingFields.length}個のフィールドを入力 (URL: ${page.url()})`);
           let navigationDetected = false;
           for (const field of remainingFields) {
             if (navigationDetected) break; // ページ遷移後は残フィールドをスキップ
@@ -915,6 +879,12 @@ export class BrowserManager {
           await page.waitForTimeout(screenshotDelay);
 
           await this.takeScreenshot(page, nextSsPath(), `${testCase.caseId} step${pageInput.stepNumber} after`, screenshots);
+
+          // フィールド入力「後」のpreClick（モーダル送信ボタンなど）
+          if (submitPreClick) {
+            this.log('info', `[${testCase.caseId}] 🖱️ submitPreClick実行(入力後): "${submitPreClick.text}" (${submitPreClick.selector})`);
+            await executePreClick(submitPreClick);
+          }
 
           // 送信ボタンクリック → 次画面へ遷移
           let submitSelector = pageInput.submitSelector || sessionPage?.submitSelector;
