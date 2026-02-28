@@ -1,5 +1,5 @@
 /**
- * MutationObserver + クリック監視 注入スクリプト
+ * MutationObserver + 全クリック監視 注入スクリプト（B案: 全クリックキャプチャ）
  * 純粋なJS（esbuildの__name注入を回避）
  */
 (() => {
@@ -17,13 +17,12 @@
     }, 800);
   };
 
-  // クリックされたボタンを記録（送信ボタン検出用）
+  // セレクター構築
   const buildSelector = (el) => {
     if (!el) return '';
     if (el.id) return `#${el.id}`;
     const tag = el.tagName.toLowerCase();
     if (el.className && typeof el.className === 'string') {
-      // 全クラスを結合して一意なセレクターにする（例: a.s-btn.s-not_member）
       const classes = el.className.trim().split(/\s+/).filter(Boolean);
       if (classes.length) return `${tag}.${classes.join('.')}`;
     }
@@ -33,41 +32,39 @@
     return tag;
   };
 
-  const isSubmitButton = (el) => {
-    if (!el) return false;
+  // クリック可能な要素か（ボタン・リンク系を広くキャプチャ）
+  const isClickableElement = (el) => {
+    if (!el || !el.tagName) return false;
     const tag = el.tagName.toLowerCase();
-    if (tag === 'button' && el.type !== 'button') return true;
-    if (tag === 'input' && ['submit', 'image'].includes(el.type)) return true;
-    if (tag === 'a' && el.href?.startsWith('javascript:')) return true;
+    if (tag === 'a') return true;
+    if (tag === 'button') return true;
+    if (tag === 'input' && ['submit', 'button', 'image'].includes(el.type)) return true;
     if (el.getAttribute('role') === 'button') return true;
-    if (el.classList?.contains('nextBtn') || el.classList?.contains('nextBtn2')) return true;
-    // テキストマッチは button/a のみ（div/span などの大きなコンテナは除外して誤検出を防ぐ）
-    if (tag === 'button' || tag === 'a') {
-      const text = (el.textContent || '').toLowerCase();
-      return /次へ|進む|送信|確認|完了|登録|スタート|開始|診断|申込|submit|next|confirm|start/.test(text);
-    }
+    if (el.hasAttribute('onclick')) return true;
     return false;
   };
 
+  // 全クリックイベントをキャプチャ → console.logでNode.js側に送信
   document.addEventListener('click', (e) => {
     let el = e.target;
-    // 親要素をたどってボタンを探す
     for (let i = 0; i < 5 && el; i++) {
-      if (isSubmitButton(el)) {
-        const selector = buildSelector(el);
-        const text = el.textContent?.trim().substring(0, 30) || '';
-        window.__lastClickedSubmit = { selector, text, timestamp: Date.now() };
-        // ①対応: console.logでNode.js側に事前通知（ページ遷移後も情報が残る）
-        console.log('__SUBMIT_CLICK__' + JSON.stringify({ selector, text }));
-        // モーダル閉じなどナビゲーションが発生しない場合のフォールバック:
-        // 1秒後にDOMの変化を通知して autoCollect を再トリガーする
-        setTimeout(() => notify(), 1000);
+      if (isClickableElement(el)) {
+        const info = {
+          ts: Date.now(),
+          url: window.location.href,
+          selector: buildSelector(el),
+          text: (el.textContent || el.value || '').trim().substring(0, 50),
+          tag: el.tagName.toLowerCase(),
+        };
+        console.log('__CLICK_EVENT__' + JSON.stringify(info));
+        setTimeout(() => notify(), 500);
         break;
       }
       el = el.parentElement;
     }
   }, true);
 
+  // MutationObserver（フォーム要素の変化を監視）
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       if (mutation.type === 'attributes') {
@@ -104,5 +101,5 @@
     details.addEventListener('toggle', notify);
   });
 
-  console.log('[FieldWatcher] 監視を開始しました');
+  console.log('[FieldWatcher] 監視を開始しました（全クリックキャプチャモード）');
 })()

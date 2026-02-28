@@ -496,9 +496,12 @@ function handleMessage(msg) {
     
     case 'recording:complete':
       currentSession = msg.payload;
+      // サーバーが整合したpages（preClick/submitSelector含む）を反映
+      collectedPages = msg.payload.pages || [];
+      renderCollectedPages();
       isRecording = false;
       updateRecordingUI();
-      addLog('info', '✅ 記録完了・保存しました');
+      addLog('info', `✅ 記録完了・保存しました (${collectedPages.length}ページ, クリックイベント整合済み)`);
       break;
     
     case 'recording:error':
@@ -582,38 +585,12 @@ function discardRecording() {
 async function doStopRecording(keepLastPage) {
   document.getElementById('stopConfirmModal').style.display = 'none';
 
-  let pages = [...collectedPages];
-  if (!keepLastPage && pages.length > 0) {
-    const removed = pages.pop();
-    addLog('info', `🗑️ 最後のページを削除: ${removed.url}`);
-  }
-
-  const d = new Date();
-  const sessionName = `recording_${tsNow()}`;
-  const session = {
-    id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
-    name: sessionName,
-    startUrl: document.getElementById('recordUrl').value,
-    pages,
-    startedAt: new Date().toISOString(),
-    completedAt: new Date().toISOString(),
-  };
-
-  await fetch(`/api/recordings/${sessionName}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(session),
-  });
-
-  sendWS({ type: 'recording:stop' });
+  // 最後のページを除外する場合はサーバーに通知
+  // サーバーがsession.pagesを一元管理しているので、GUIはstopを送るだけ
+  sendWS({ type: 'recording:stop', payload: { dropLastPage: !keepLastPage } });
   isRecording = false;
-  currentSession = session;
   updateRecordingUI();
-  addLog('info', '✅ 記録を保存しました');
-
-  if (session.pages.length > 0) {
-    autoGenerateTestCase(session);
-  }
+  addLog('info', '⏳ 記録を保存中... (クリックイベントを解析しています)');
 }
 
 function updateRecordingUI() {

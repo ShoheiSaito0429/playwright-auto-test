@@ -32,7 +32,7 @@ function loadSettings(): Settings {
 }
 
 // ===== データディレクトリ =====
-['data/recordings', 'data/testcases', 'data/screenshots'].forEach(d =>
+['data/recordings', 'data/testcases', 'data/screenshots', 'data/events'].forEach(d =>
   fs.mkdirSync(path.resolve(d), { recursive: true })
 );
 
@@ -366,9 +366,8 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
         case 'recording:stop': {
-          // GUIから完成されたページ情報と一緒にstopを呼ぶ
-          const pages = (msg.payload as any)?.pages || [];
-          await browserManager.stopRecording(pages);
+          const dropLastPage = (msg.payload as any)?.dropLastPage ?? false;
+          await browserManager.stopRecording(dropLastPage);
           break;
         }
         case 'replay:abort': {

@@ -34,6 +34,14 @@ export interface PreClick {
   text: string;
 }
 
+export interface ClickEvent {
+  ts: number;       // Date.now() ミリ秒
+  url: string;      // クリック時のURL
+  selector: string;
+  text: string;
+  tag: string;
+}
+
 export interface RecordedPage {
   id: string;
   url: string;
@@ -45,6 +53,7 @@ export interface RecordedPage {
   submitSelector?: string;
   submitText?: string;
   recordedAt: string;
+  recordedAtMs: number;  // ページ収集時のミリ秒タイムスタンプ
 }
 
 export interface RecordingSession {

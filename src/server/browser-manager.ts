@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuid } from 'uuid';
 import { fileURLToPath } from 'url';
-import type { RecordingSession, RecordedPage, Settings, TestCase, ReplayResult, WSMessage } from '../types.js';
+import type { RecordingSession, RecordedPage, Settings, TestCase, ReplayResult, WSMessage, ClickEvent } from '../types.js';
 import { collectPageFields, installFieldWatcher } from './field-collector.js';
 import { InputHandler } from './input-handler.js';
 
@@ -47,9 +47,8 @@ export class BrowserManager {
   private recording = false;
   private session: RecordingSession | null = null;
   private stepCounter = 0;
-  // ページ遷移前にconsole経由で受け取ったボタンクリック情報（キュー方式）
-  // 複数ボタンを素早く押しても全て保持される
-  private _pendingClickedSubmits: { selector: string; text: string }[] = [];
+  // クリックイベント記録ファイルパス（記録中のみ使用）
+  private eventsFilePath: string = '';
   // autoCollectFields の並行実行防止フラグ
   private _collecting = false;
   private _pendingCollect = false;
@@ -87,14 +86,12 @@ export class BrowserManager {
       viewport: this.settings.browser.viewport,
     });
 
-    // ページロード前からクリックリスナーを注入（モーダル等の早期クリックも取り逃さない）
-    // ※ 通常のfunction宣言を使用してesbuildの__name注入を回避
+    // ページロード前から全クリックをキャプチャ（モーダル内ボタンも漏らさない）
     await this.context.addInitScript(`(function() {
       function buildClickSelector(el) {
         if (el.id) return '#' + el.id;
         var tag = (el.tagName || '').toLowerCase();
         if (el.className && typeof el.className === 'string') {
-          // 全クラスを結合して一意なセレクターにする（例: a.s-btn.s-not_member）
           var classes = el.className.trim().split(/\\s+/).filter(function(c){ return c; });
           if (classes.length) return tag + '.' + classes.join('.');
         }
@@ -102,31 +99,31 @@ export class BrowserManager {
         var text = (el.textContent || '').trim().substring(0, 20);
         return text ? tag + ':has-text("' + text + '")' : tag;
       }
-      function isClickableBtn(el) {
+      function isClickableElement(el) {
         if (!el || !el.tagName) return false;
         var tag = el.tagName.toLowerCase();
-        if (tag === 'button' && el.type !== 'button') return true;
-        if (tag === 'input' && (el.type === 'submit' || el.type === 'image')) return true;
-        if (tag === 'a' && el.href && el.href.indexOf('javascript:') === 0) return true;
+        if (tag === 'a') return true;
+        if (tag === 'button') return true;
+        if (tag === 'input' && (el.type === 'submit' || el.type === 'button' || el.type === 'image')) return true;
         if (el.getAttribute && el.getAttribute('role') === 'button') return true;
-        if (el.classList && (el.classList.contains('nextBtn') || el.classList.contains('nextBtn2'))) return true;
-        // テキストマッチは button/a のみ（div/span などの大きなコンテナは除外して誤検出を防ぐ）
-        if (tag === 'button' || tag === 'a') {
-          var text = (el.textContent || '').toLowerCase();
-          return /次へ|進む|送信|確認|完了|登録|スタート|開始|診断|申込|submit|next|confirm|start/.test(text);
-        }
+        if (el.hasAttribute && el.hasAttribute('onclick')) return true;
         return false;
       }
       document.addEventListener('click', function(e) {
         var el = e.target;
         for (var i = 0; i < 5 && el; i++) {
-          if (isClickableBtn(el)) {
-            var info = { selector: buildClickSelector(el), text: (el.textContent || '').trim().substring(0, 30) };
-            window.__lastClickedSubmit = info;
-            console.log('__SUBMIT_CLICK__' + JSON.stringify(info));
+          if (isClickableElement(el)) {
+            var info = {
+              ts: Date.now(),
+              url: window.location.href,
+              selector: buildClickSelector(el),
+              text: ((el.textContent || '') + (el.value || '')).trim().substring(0, 50),
+              tag: el.tagName.toLowerCase(),
+            };
+            console.log('__CLICK_EVENT__' + JSON.stringify(info));
             setTimeout(function() {
               if (typeof window.__fieldWatcherCallback === 'function') window.__fieldWatcherCallback();
-            }, 1000);
+            }, 500);
             break;
           }
           el = el.parentElement;
@@ -137,30 +134,34 @@ export class BrowserManager {
     this.page = await this.context.newPage();
     this.recording = true;
     this.stepCounter = 0;
-    this._pendingClickedSubmits = []; // クリックキューをリセット
+
+    const sessionId = uuid();
+    const sessionName = `recording_${timestamp()}`;
+
+    // クリックイベント記録ファイルを初期化
+    const eventsDir = path.resolve('data/events');
+    fs.mkdirSync(eventsDir, { recursive: true });
+    this.eventsFilePath = path.join(eventsDir, `${sessionName}_clicks.jsonl`);
+    fs.writeFileSync(this.eventsFilePath, '', 'utf-8'); // 空ファイルで初期化
 
     this.session = {
-      id: uuid(),
-      name: `recording_${timestamp()}`,
+      id: sessionId,
+      name: sessionName,
       startUrl,
       pages: [],
       startedAt: new Date().toISOString(),
       completedAt: '',
     };
 
-    // ①対応: console.log経由でボタンクリックをページ遷移前に捕捉
+    // 全クリックイベントをファイルに記録
     this.page.on('console', (msg) => {
       if (!this.recording) return;
       const text = msg.text();
-      if (text.startsWith('__SUBMIT_CLICK__')) {
+      if (text.startsWith('__CLICK_EVENT__')) {
         try {
-          const data = JSON.parse(text.slice('__SUBMIT_CLICK__'.length));
-          // キューに追加（上書きでなく蓄積、直前の重複は排除）
-          const lastQ = this._pendingClickedSubmits[this._pendingClickedSubmits.length - 1];
-          if (!lastQ || lastQ.selector !== data.selector || lastQ.text !== data.text) {
-            this._pendingClickedSubmits.push(data);
-          }
-          this.log('info', `🖱️ ボタンクリック事前検知: ${data.selector} "${data.text}"`);
+          const data: ClickEvent = JSON.parse(text.slice('__CLICK_EVENT__'.length));
+          fs.appendFileSync(this.eventsFilePath, JSON.stringify(data) + '\n', 'utf-8');
+          this.log('info', `🖱️ クリック記録: ${data.selector} "${data.text}"`);
         } catch {}
       }
     });
@@ -232,77 +233,18 @@ export class BrowserManager {
   private async _doCollect(): Promise<void> {
     if (!this.page || !this.recording || this.page.isClosed()) return;
 
-    // URLをasync処理前に即座に取得（遷移中に変わらないように）
     const capturedUrl = this.page.url();
 
     try {
-      // クリックされたボタン情報をキューからすべて取得
-      // ①優先: console.log経由で事前に蓄積した情報（キュー方式）
-      // ②フォールバック: ページのwindow変数から取得
-      let pendingClicks = this._pendingClickedSubmits.splice(0); // 全取り出し
-      if (pendingClicks.length === 0) {
-        try {
-          const info = await this.page.evaluate(() => {
-            const i = (window as any).__lastClickedSubmit;
-            (window as any).__lastClickedSubmit = null;
-            return i || null;
-          });
-          if (info) pendingClicks = [info];
-        } catch { /* ページ遷移中は無視 */ }
-      }
-
-      // クリックの分類: 同じURLならpreClick、異なるURL(ナビゲーション)ならsubmitSelector
-      const prevPage = this.session.pages.length > 0
-        ? this.session.pages[this.session.pages.length - 1]
-        : null;
-      if (pendingClicks.length > 0 && prevPage) {
-        if (prevPage.url !== capturedUrl) {
-          // ナビゲーション後 → 最後のクリックを前ページのsubmitSelectorとして記録
-          const lastClick = pendingClicks[pendingClicks.length - 1];
-          prevPage.submitSelector = lastClick.selector;
-          prevPage.submitText = lastClick.text;
-          this.log('info', `🎯 submitSelector記録: ${lastClick.selector} "${lastClick.text}"`);
-          
-          // 最後のクリック以外をpreClicksとして記録（「戻る」→「OK」等の連続クリック対応）
-          if (pendingClicks.length > 1) {
-            const intermediateClicks = pendingClicks.slice(0, -1);
-            if (!prevPage.preClicks) prevPage.preClicks = [];
-            for (const pc of intermediateClicks) {
-              prevPage.preClicks.push({ selector: pc.selector, text: pc.text });
-              this.log('info', `🖱️ preClick記録（遷移前）: ${pc.selector} "${pc.text}"`);
-            }
-          }
-          
-          this.send({
-            type: 'recording:submit-detected',
-            payload: { pageId: prevPage.id, submitSelector: lastClick.selector, submitText: lastClick.text },
-          });
-          pendingClicks = []; // 処理済みとしてクリア
-        }
-        // 同じURLの場合はURLdedup処理で preClicks に追加するので、ここでは何もしない
-      }
-      // 後続コードで使えるよう lastClickedSubmit を設定（旧コードとの互換性）
-      const clickedSubmit = pendingClicks.length > 0 ? pendingClicks[pendingClicks.length - 1] : null;
-
       await this.page.waitForLoadState('domcontentloaded');
-      
-      // 動的フィールド対応: ページ読み込み後、追加の待機
-      // JSフレームワーク（React/Vue等）のレンダリング完了を待つ
       await new Promise(r => setTimeout(r, 1000));
-      
-      // networkidleも待つ（APIリクエスト完了待ち）
       await this.page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-      
-      // さらに少し待って、遅延レンダリングに対応
       await new Promise(r => setTimeout(r, 500));
 
       const url = capturedUrl;
       const title = await this.page.title().catch(() => '');
 
-      this.send({
-        type: 'browser:navigated',
-        payload: { url, title },
-      });
+      this.send({ type: 'browser:navigated', payload: { url, title } });
 
       // ページ遷移後にMutationObserverを再注入
       try {
@@ -312,61 +254,43 @@ export class BrowserManager {
         });
       } catch { /* 既に注入済みの場合は無視 */ }
 
-      // 最初の収集
+      // フィールド収集（初回 + リトライ）
       let fields = await collectPageFields(this.page);
-      
-      // 常に追加待機して再収集（動的フィールド対応）
       const retryDelay = this.settings.timeout?.fieldCollectRetryDelay ?? 2000;
       await new Promise(r => setTimeout(r, retryDelay));
       const retryFields = await collectPageFields(this.page);
       if (retryFields.length > fields.length) {
         this.log('info', `🔄 追加フィールドを検出: ${fields.length} → ${retryFields.length}`);
         fields = retryFields;
-      } else if (retryFields.length === fields.length) {
-        // 同数でも内容が変わっている可能性があるのでマージ
+      } else {
         const existingSelectors = new Set(fields.map(f => f.selector));
         for (const f of retryFields) {
-          if (!existingSelectors.has(f.selector)) {
-            fields.push(f);
-          }
+          if (!existingSelectors.has(f.selector)) fields.push(f);
         }
       }
-      
-      // 同一URLの場合は既存ページを更新（モーダル閉じ後の再collectで重複しないように）
-      const lastPage = this.session.pages.length > 0
-        ? this.session.pages[this.session.pages.length - 1]
+
+      // 同一URLの場合はフィールドをマージ（タイムスタンプ更新）
+      const lastPage = this.session!.pages.length > 0
+        ? this.session!.pages[this.session!.pages.length - 1]
         : null;
       if (lastPage && lastPage.url === url) {
-        // 同一URL内でのボタンクリック（モーダル閉じなど）→ preClicks として全て記録
-        let updated = false;
-        if (pendingClicks.length > 0) {
-          if (!lastPage.preClicks) lastPage.preClicks = [];
-          for (const pc of pendingClicks) {
-            lastPage.preClicks.push({ selector: pc.selector, text: pc.text });
-            this.log('info', `🖱️ preClick記録: ${pc.selector} "${pc.text}"`);
-          }
-          updated = true;
-        }
-        // フィールドをマージ（既存に含まれないものだけ追加）
         const existingSels = new Set(lastPage.fields.map((f: any) => f.selector));
         const newFields = fields.filter((f: any) => !existingSels.has(f.selector));
         if (newFields.length > 0) {
           lastPage.fields.push(...newFields);
+          lastPage.recordedAtMs = Date.now();
           this.log('info', `🔄 同一URL: ${newFields.length}個の新フィールドをマージ`);
-          updated = true;
-        }
-        // 更新があった場合はクライアントに通知（preClicksを含めて再送信）
-        if (updated) {
           this.send({ type: 'recording:page-collected', payload: lastPage });
         }
         return;
       }
 
-      // フィールドが0件 かつ ボタンクリックも無し → 記録不要
-      if (fields.length === 0 && pendingClicks.length === 0) return;
+      // フィールドが0件 → 記録不要
+      if (fields.length === 0) return;
 
       this.stepCounter++;
       const pageId = uuid();
+      const nowMs = Date.now();
 
       const recordedPage: RecordedPage = {
         id: pageId,
@@ -375,111 +299,17 @@ export class BrowserManager {
         stepNumber: this.stepCounter,
         fields,
         recordedAt: new Date().toISOString(),
+        recordedAtMs: nowMs,
       };
 
-      // Case 3: 最初のページでモーダルボタンクリックが先に発生していた場合
-      // lastPageが存在しないためsubmitSelectorに使われなかったclicksをpreClicksとして保存（全件）
-      if (pendingClicks.length > 0 && this.session.pages.length === 0) {
-        recordedPage.preClicks = pendingClicks.map(pc => ({ selector: pc.selector, text: pc.text }));
-        this.log('info', `🖱️ 初回ページのpreClickを記録: ${pendingClicks.map(pc => `${pc.selector} "${pc.text}"`).join(', ')}`);
-      }
+      this.session!.pages.push(recordedPage);
 
-      // 送信ボタン検出（javascript:リンク対応強化）
-      const submitInfo = await this.page.evaluate(() => {
-        // 日本語保険サイト対応のテキストパターン
-        const textPattern = /次へ|進む|送信|確認|完了|登録|保存|スタート|開始|診断|申込|見積|ログイン|サインイン|submit|next|confirm|save|start|login|sign.?in/i;
-        
-        const candidates: HTMLElement[] = [
-          // 1. type="submit" ボタン
-          ...Array.from(document.querySelectorAll('button[type="submit"]')) as HTMLElement[],
-          ...Array.from(document.querySelectorAll('input[type="submit"]')) as HTMLElement[],
-          // 2. input[type="image"] 画像ボタン
-          ...Array.from(document.querySelectorAll('input[type="image"]')) as HTMLElement[],
-          // 3. javascript: リンク（全労済などで使用）
-          ...Array.from(document.querySelectorAll('a[href^="javascript:"]')).filter((a: Element) => {
-            const el = a as HTMLElement;
-            return el.offsetParent !== null && textPattern.test(el.textContent || '');
-          }) as HTMLElement[],
-          // 4. nextBtn/nextBtn2 クラス（全労済パターン）
-          ...Array.from(document.querySelectorAll('a.nextBtn, a.nextBtn2')) as HTMLElement[],
-          // 5. role="button" ARIAボタン
-          ...Array.from(document.querySelectorAll('[role="button"]')).filter((b: Element) => {
-            const el = b as HTMLElement;
-            return el.offsetParent !== null && textPattern.test(el.textContent || '');
-          }) as HTMLElement[],
-          // 6. div/span[onclick] カスタムクリック要素
-          ...Array.from(document.querySelectorAll('div[onclick], span[onclick]')).filter((b: Element) => {
-            const el = b as HTMLElement;
-            return el.offsetParent !== null && textPattern.test(el.textContent || '');
-          }) as HTMLElement[],
-          // 7. テキストマッチのボタン
-          ...Array.from(document.querySelectorAll('button')).filter((b: Element) => {
-            const el = b as HTMLElement;
-            return el.offsetParent !== null && textPattern.test(el.textContent || '');
-          }) as HTMLElement[],
-          // 8. テキストマッチのリンク
-          ...Array.from(document.querySelectorAll('a')).filter((a: Element) => {
-            const el = a as HTMLElement;
-            return el.offsetParent !== null && textPattern.test(el.textContent || '');
-          }) as HTMLElement[],
-        ];
-        
-        // 重複削除
-        const seen = new Set<HTMLElement>();
-        const uniqueCandidates = candidates.filter(el => {
-          if (seen.has(el)) return false;
-          seen.add(el);
-          return true;
-        });
-        
-        if (uniqueCandidates.length === 0) return null;
-        const el = uniqueCandidates[0];
-        const tagName = el.tagName.toLowerCase();
-        
-        let selector = '';
-        if (el.id) {
-          selector = `#${el.id}`;
-        } else if (el.className && typeof el.className === 'string') {
-          // クラス名からセレクタを構築（複数クラスの場合は最初のものを使用）
-          const className = el.className.trim().split(/\s+/)[0];
-          if (className) {
-            selector = `${tagName}.${className}`;
-          }
-        }
-        if (!selector && el.getAttribute('name')) {
-          selector = `${tagName}[name="${el.getAttribute('name')}"]`;
-        }
-        if (!selector && el.getAttribute('type') === 'submit') {
-          selector = `${tagName}[type="submit"]`;
-        }
-        if (!selector) {
-          const text = el.textContent?.trim().substring(0, 20) || '';
-          selector = `${tagName}:has-text("${text}")`;
-        }
-        
-        return { selector, text: el.textContent?.trim() || '' };
-      });
-
-      if (submitInfo) {
-        recordedPage.submitSelector = submitInfo.selector;
-        recordedPage.submitText = submitInfo.text;
-      }
-
-      // サーバー側セッションにも追加（URLデdup・Case3判定に必要）
-      this.session.pages.push(recordedPage);
-
-      this.send({
-        type: 'recording:page-collected',
-        payload: recordedPage,
-      });
-      this.send({
-        type: 'fields:collected',
-        payload: { pageId, fields },
-      });
+      this.send({ type: 'recording:page-collected', payload: recordedPage });
+      this.send({ type: 'fields:collected', payload: { pageId, fields } });
 
       this.log('info', `ステップ${this.stepCounter}: ${fields.length}個のフィールドを検出 (${title})`);
       this.log('info', `  └ URL: ${url.substring(0, 80)}${url.length > 80 ? '...' : ''}`);
-      this.log('info', `  └ セッション内ページ数: ${this.session.pages.length}`);
+      this.log('info', `  └ セッション内ページ数: ${this.session!.pages.length}`);
     } catch (err: any) {
       this.log('warn', `フィールド収集エラー: ${err.message}`);
     }
@@ -554,24 +384,29 @@ export class BrowserManager {
     return recordedPage;
   }
 
-  async stopRecording(pages: RecordedPage[]): Promise<RecordingSession | null> {
+  async stopRecording(dropLastPage = false): Promise<RecordingSession | null> {
     if (!this.session) return null;
     this.recording = false;
 
-    this.session.pages = pages;
+    if (dropLastPage && this.session.pages.length > 0) {
+      const removed = this.session.pages.pop();
+      this.log('info', `🗑️ 最後のページを除外: ${removed?.url}`);
+    }
+
     this.session.completedAt = new Date().toISOString();
+
+    // クリックイベントを照合してpreClick/submitSelectorを自動整合
+    this.enrichPagesWithClickEvents();
 
     // 詳細ログ出力
     this.log('info', `━━━ 記録サマリー ━━━`);
-    this.log('info', `📊 合計ページ数: ${pages.length}`);
-    for (const page of pages) {
+    this.log('info', `📊 合計ページ数: ${this.session.pages.length}`);
+    for (const page of this.session.pages) {
       const preClickCount = page.preClicks?.length ?? 0;
       const fieldCount = page.fields?.length ?? 0;
       this.log('info', `  ステップ${page.stepNumber}: ${fieldCount}フィールド, ${preClickCount}preClicks, submit="${page.submitText || 'なし'}"`);
-      if (page.preClicks && page.preClicks.length > 0) {
-        for (const pc of page.preClicks) {
-          this.log('info', `    └ preClick: "${pc.text}"`);
-        }
+      for (const pc of (page.preClicks ?? [])) {
+        this.log('info', `    └ preClick: "${pc.text}" (${pc.selector})`);
       }
     }
     this.log('info', `━━━━━━━━━━━━━━━━━━`);
@@ -586,6 +421,74 @@ export class BrowserManager {
 
     await this.cleanup();
     return this.session;
+  }
+
+  /**
+   * クリックイベントファイルを読み取り、各ページのpreClick/submitSelectorを自動整合
+   * 「ボタン押下→モーダル表示→モーダル押下→遷移」のような複雑なフローに対応
+   */
+  private enrichPagesWithClickEvents(): void {
+    if (!this.eventsFilePath || !fs.existsSync(this.eventsFilePath)) {
+      this.log('warn', 'クリックイベントファイルが見つかりません');
+      return;
+    }
+
+    let clickEvents: ClickEvent[] = [];
+    try {
+      const lines = fs.readFileSync(this.eventsFilePath, 'utf-8').split('\n').filter(Boolean);
+      clickEvents = lines
+        .map(l => { try { return JSON.parse(l) as ClickEvent; } catch { return null; } })
+        .filter((e): e is ClickEvent => e !== null);
+    } catch (e: any) {
+      this.log('warn', `クリックイベント読み取りエラー: ${e.message}`);
+      return;
+    }
+
+    this.log('info', `📊 クリックイベント総数: ${clickEvents.length}`);
+    if (clickEvents.length === 0) return;
+
+    // ページをrecordedAtMs順にソート
+    const sortedPages = [...this.session!.pages].sort((a, b) =>
+      (a.recordedAtMs || 0) - (b.recordedAtMs || 0)
+    );
+
+    for (let i = 0; i < sortedPages.length; i++) {
+      const page = sortedPages[i];
+      const nextPage = sortedPages[i + 1];
+
+      // このページが収集された後、次のページが収集されるまでのクリックを取得
+      const pageCollectedMs = page.recordedAtMs || 0;
+      const nextPageCollectedMs = nextPage?.recordedAtMs || Date.now();
+
+      const pageClicks = clickEvents.filter(e =>
+        e.ts >= pageCollectedMs && e.ts < nextPageCollectedMs
+      );
+
+      if (pageClicks.length === 0) continue;
+
+      if (nextPage) {
+        // 最後のクリック → submitSelector（ページ遷移を起こしたボタン）
+        const lastClick = pageClicks[pageClicks.length - 1];
+        page.submitSelector = lastClick.selector;
+        page.submitText = lastClick.text;
+        this.log('info', `  ステップ${page.stepNumber} submitSelector: "${lastClick.text}" (${lastClick.selector})`);
+
+        // それ以前のクリック → preClicks（モーダル操作など）
+        if (pageClicks.length > 1) {
+          page.preClicks = pageClicks.slice(0, -1).map(e => ({ selector: e.selector, text: e.text }));
+          this.log('info', `  ステップ${page.stepNumber} preClicks: ${page.preClicks.length}件`);
+        }
+      } else {
+        // 最後のページ: 全クリックをpreClickとして保存
+        page.preClicks = pageClicks.map(e => ({ selector: e.selector, text: e.text }));
+      }
+    }
+
+    // 整合後をsession.pagesに反映
+    for (const sortedPage of sortedPages) {
+      const idx = this.session!.pages.findIndex(p => p.id === sortedPage.id);
+      if (idx >= 0) this.session!.pages[idx] = sortedPage;
+    }
   }
 
   // ===== スクリーンショットヘルパー =====
