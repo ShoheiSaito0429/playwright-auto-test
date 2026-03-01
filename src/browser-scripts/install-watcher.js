@@ -63,10 +63,18 @@
     return false;
   };
 
-  // ラジオ・チェックボックス変更後に再収集（選択値を確実に取得するため）
+  // ラジオ・チェックボックス・select変更後に再収集
   document.addEventListener('change', (e) => {
     const el = e.target;
     if (el.type === 'radio' || el.type === 'checkbox' || el.tagName === 'SELECT') {
+      notify();
+    }
+  }, true);
+
+  // テキスト入力後に再収集（inputイベント：テキスト/数字/日付等）
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
       notify();
     }
   }, true);

@@ -193,6 +193,31 @@ export class BrowserManager {
       await this.autoCollectFields();
     });
 
+    // ナビゲーション前に現在のページのフィールド値を保存
+    this.page.on('request', async (request) => {
+      if (!this.recording || !this.page || this.page.isClosed()) return;
+      if (request.resourceType() !== 'document') return;
+      if (request.frame() !== this.page.mainFrame()) return;
+      // ナビゲーション前の最終フィールド値を現在のページに保存
+      if (this.session && this.session.pages.length > 0) {
+        try {
+          const currentFields = await collectPageFields(this.page);
+          const lastPage = this.session.pages[this.session.pages.length - 1];
+          let updated = false;
+          for (const f of currentFields) {
+            const existing = lastPage.fields.find((e: any) => e.selector === f.selector);
+            if (existing && (f.value !== '' || f.checked)) {
+              existing.value = f.value;
+              existing.checked = f.checked;
+              existing.state = f.state;
+              updated = true;
+            }
+          }
+          if (updated) this.log('info', '💾 ナビゲーション前にフィールド値を保存');
+        } catch {}
+      }
+    });
+
     // SPA対応: URL変化を検知
     this.page.on('framenavigated', async (frame) => {
       if (!this.recording || !this.page || frame !== this.page.mainFrame()) return;
