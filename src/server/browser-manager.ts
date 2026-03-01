@@ -965,7 +965,7 @@ export class BrowserManager {
             // デバッグ: ページ内のボタン候補を列挙
             // debugInfo省略（外部JS化で__name問題回避）
             
-            const autoDetectedScript = readFileSync(join(__dirname, '../browser-scripts/auto-detect-submit.js'), 'utf8');
+            const autoDetectedScript = fs.readFileSync(path.join(__dirname, '../browser-scripts/auto-detect-submit.js'), 'utf8');
             const autoDetected = await page.evaluate(autoDetectedScript);
 
             if (autoDetected) {
