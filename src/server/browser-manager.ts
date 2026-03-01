@@ -979,20 +979,35 @@ export class BrowserManager {
                 'next', 'submit', 'confirm', 'start'
               ];
 
+              // 除外すべきテキスト（閉じる・戻る・キャンセル系）
+              const excludeTexts = ['閉じる', '戻る', 'キャンセル', 'close', 'back', 'cancel', '×', '✕'];
+              // 除外すべきCSSクラス
+              const excludeClasses = ['js-close', 'js-close-all', 'mfp-close', 's-close', 'c-back'];
+
+              const isExcluded = (el: HTMLElement) => {
+                const text = el.textContent?.trim().toLowerCase() || '';
+                const cls = el.className || '';
+                if (excludeTexts.some(t => text.includes(t.toLowerCase()))) return true;
+                if (excludeClasses.some(c => cls.includes(c))) return true;
+                // javascript:close系を除外
+                const href = el.getAttribute('href') || '';
+                if (href.toLowerCase().includes('close') || href.toLowerCase().includes('magnificpopup')) return true;
+                return false;
+              };
+
               for (const pattern of patterns) {
-                const el = document.querySelector(pattern) as HTMLElement | null;
-                // offsetParent チェックを緩和（fixedやabsoluteでもnullになることがある）
-                if (el) {
+                const els = Array.from(document.querySelectorAll(pattern)) as HTMLElement[];
+                for (const el of els) {
                   const style = window.getComputedStyle(el);
                   const isHidden = style.display === 'none' || style.visibility === 'hidden';
-                  if (!isHidden) {
-                    const id = el.id ? `#${el.id}` : null;
-                    const className = el.className && typeof el.className === 'string' 
-                      ? `.${el.className.trim().split(/\s+/)[0]}` 
-                      : null;
-                    const name = el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : null;
-                    return id || className || name || pattern;
-                  }
+                  if (isHidden) continue;
+                  if (isExcluded(el)) continue;
+                  const id = el.id ? `#${el.id}` : null;
+                  const className = el.className && typeof el.className === 'string'
+                    ? `.${el.className.trim().split(/\s+/)[0]}`
+                    : null;
+                  const name = el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : null;
+                  return id || className || name || pattern;
                 }
               }
 
@@ -1003,6 +1018,7 @@ export class BrowserManager {
                 const style = window.getComputedStyle(btn);
                 const isHidden = style.display === 'none' || style.visibility === 'hidden';
                 if (isHidden) continue;
+                if (isExcluded(btn)) continue;
                 
                 const text = btn.textContent?.trim() || '';
                 const value = (btn as HTMLInputElement).value || '';
