@@ -461,7 +461,7 @@ wss.on('connection', (ws: WebSocket) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log('');
   console.log('╔════════════════════════════════════════════════╗');
   console.log('║   🚀 Playwright Auto Test - GUI サーバー起動    ║');
