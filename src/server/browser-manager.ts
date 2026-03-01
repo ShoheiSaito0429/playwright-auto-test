@@ -193,15 +193,19 @@ export class BrowserManager {
       await this.autoCollectFields();
     });
 
-    // ナビゲーション前に現在のページのフィールド値を保存
+    // ナビゲーション前に現在のページのフィールド値を保存（タイムアウト付き）
     this.page.on('request', async (request) => {
       if (!this.recording || !this.page || this.page.isClosed()) return;
       if (request.resourceType() !== 'document') return;
       if (request.frame() !== this.page.mainFrame()) return;
-      // ナビゲーション前の最終フィールド値を現在のページに保存
       if (this.session && this.session.pages.length > 0) {
         try {
-          const currentFields = await collectPageFields(this.page);
+          // タイムアウト付きでフィールド取得（ナビゲーション開始直後はDOMがまだある）
+          const currentFields = await Promise.race([
+            collectPageFields(this.page),
+            new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000))
+          ]).catch(() => [] as any[]);
+          if (currentFields.length === 0) return;
           const lastPage = this.session.pages[this.session.pages.length - 1];
           let updated = false;
           for (const f of currentFields) {

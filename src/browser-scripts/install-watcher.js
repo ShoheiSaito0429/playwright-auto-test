@@ -14,7 +14,7 @@
       if (typeof window.__fieldWatcherCallback === 'function') {
         window.__fieldWatcherCallback();
       }
-    }, 800);
+    }, 300);
   };
 
   // セレクター構築（一意性を優先した優先順位）
