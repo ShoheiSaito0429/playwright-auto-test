@@ -313,10 +313,12 @@ export class BrowserManager {
       }
 
       // 同一URLの場合はフィールドをマージ（値・状態も更新）
+      // URLのパス部分のみで比較（ticketなどクエリパラメーターが変わるサイト対応）
+      const getPathname = (u: string) => { try { return new URL(u).pathname; } catch { return u; } };
       const lastPage = this.session!.pages.length > 0
         ? this.session!.pages[this.session!.pages.length - 1]
         : null;
-      if (lastPage && lastPage.url === url) {
+      if (lastPage && getPathname(lastPage.url) === getPathname(url)) {
         let updated = false;
         for (const newField of fields) {
           const existing = lastPage.fields.find((f: any) => f.selector === newField.selector);
@@ -451,6 +453,34 @@ export class BrowserManager {
     }
 
     this.session.completedAt = new Date().toISOString();
+
+    // 記録終了時に現在のフィールド値を最終キャプチャ（hidden→visible後の値を拾う）
+    if (this.page && !this.page.isClosed() && this.session.pages.length > 0) {
+      try {
+        const { collectPageFields } = await import('./field-collector.js');
+        const finalFields = await collectPageFields(this.page);
+        const lastPage = this.session.pages[this.session.pages.length - 1];
+        let updated = false;
+        for (const newField of finalFields) {
+          const existing = lastPage.fields.find((f: any) => f.selector === newField.selector);
+          if (existing) {
+            if (existing.value !== newField.value || existing.checked !== newField.checked) {
+              existing.value = newField.value;
+              existing.checked = newField.checked;
+              existing.state = newField.state;
+              existing.isVisible = newField.isVisible;
+              updated = true;
+            }
+          } else if (newField.isVisible) {
+            lastPage.fields.push(newField);
+            updated = true;
+          }
+        }
+        if (updated) this.log('info', '✅ 記録終了時に最終フィールド値を更新');
+      } catch (e: any) {
+        this.log('warn', `最終フィールド値取得エラー: ${e.message}`);
+      }
+    }
 
     // クリックイベントを照合してpreClick/submitSelectorを自動整合
     this.enrichPagesWithClickEvents();
@@ -780,11 +810,12 @@ export class BrowserManager {
         if (sortedInputs.length > 0) {
           const firstSessionPage = session.pages.find(p => p.stepNumber === sortedInputs[0].stepNumber);
           const firstUrl = firstSessionPage?.url;
+          const getPN = (u: string) => { try { return new URL(u).pathname; } catch { return u; } };
           if (firstUrl) {
             const testStepNums = new Set(testCase.pageInputs.map(p => p.stepNumber));
-            // テストケースに未含有 & 同URL & preClicks有り のセッションページをstep順に実行
+            // テストケースに未含有 & 同URL(pathname比較) & preClicks有り のセッションページをstep順に実行
             const setupPages = session.pages
-              .filter(p => p.url === firstUrl && !testStepNums.has(p.stepNumber) && (p.preClicks?.length ?? 0) > 0)
+              .filter(p => getPN(p.url) === getPN(firstUrl) && !testStepNums.has(p.stepNumber) && (p.preClicks?.length ?? 0) > 0)
               .sort((a, b) => a.stepNumber - b.stepNumber);
             if (setupPages.length > 0) {
               this.log('info', `[${testCase.caseId}] 🔧 セットアップpreClicks: ${setupPages.flatMap(p => p.preClicks ?? []).length}件（${setupPages.length}ステップ分）`);
