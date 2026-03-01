@@ -925,7 +925,7 @@ export class BrowserManager {
             const nextTexts = ['次へ', '進む', '送信', '確認', '完了', '開始', '申込', '見積'];
             if (nextTexts.some(t => lastPc.text.includes(t))) {
               submitSelector = lastPc.selector;
-              this.log('info', \`[\${testCase.caseId}] 💡 preClicks lastをsubmitに使用: "\${lastPc.text}"\`);
+              this.log('info', `[${testCase.caseId}] 💡 preClicks lastをsubmitに使用: "${lastPc.text}"`);
             }
           }
 
