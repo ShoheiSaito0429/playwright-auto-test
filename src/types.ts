@@ -32,6 +32,7 @@ export interface RecordedField {
 export interface PreClick {
   selector: string;
   text: string;
+  href?: string;  // 要素のhref属性（セレクタ曖昧時の補完用）
 }
 
 export interface ClickEvent {
@@ -41,6 +42,7 @@ export interface ClickEvent {
   selector: string;
   text: string;
   tag: string;
+  href?: string;    // 要素のhref属性
 }
 
 export interface RecordedPage {

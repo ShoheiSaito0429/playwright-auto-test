@@ -95,9 +95,11 @@ export class BrowserManager {
         // 1. id が最も確実
         if (el.id) return '#' + el.id;
 
-        // 2. href が固有な場合（javascript: リンクや固有パスは識別子として最強）
+        // 2. href を優先的に使用（ambiguousなセレクタを避けるため）
         var href = el.getAttribute ? (el.getAttribute('href') || '') : '';
-        if (href && href !== '#' && href !== 'javascript:void(0)' && href !== 'javascript:;') {
+        var isVoidHref = href === 'javascript:void(0)' || href === 'javascript:;' || href === '';
+        if (href && !isVoidHref) {
+          // javascript:Func() や /path/to/page など固有のhrefはそのまま使う
           return tag + '[href="' + href + '"]';
         }
 
@@ -106,15 +108,20 @@ export class BrowserManager {
           ? el.className.trim().split(/\\s+/).filter(function(c){ return c; })
           : [];
 
-        // 3. クラス + テキスト の組み合わせ（クラス単独より確実）
+        // 3. href="#" の場合もhref属性をセレクタに含める（クラス+テキストより絞り込み精度UP）
+        if (href === '#' && classes.length && text) {
+          return tag + '[href="#"].' + classes.join('.') + ':has-text("' + text + '")';
+        }
+
+        // 4. クラス + テキスト の組み合わせ
         if (classes.length && text) {
           return tag + '.' + classes.join('.') + ':has-text("' + text + '")';
         }
 
-        // 4. テキストのみ
+        // 5. テキストのみ
         if (text) return tag + ':has-text("' + text + '")';
 
-        // 5. クラスのみ（最終手段）
+        // 6. クラスのみ（最終手段）
         if (classes.length) return tag + '.' + classes.join('.');
 
         if (el.getAttribute && el.getAttribute('name')) return tag + '[name="' + el.getAttribute('name') + '"]';
@@ -140,6 +147,7 @@ export class BrowserManager {
               selector: buildClickSelector(el),
               text: ((el.textContent || '') + (el.value || '')).trim().substring(0, 50),
               tag: el.tagName.toLowerCase(),
+              href: el.getAttribute ? (el.getAttribute('href') || '') : '',
             };
             console.log('__CLICK_EVENT__' + JSON.stringify(info));
             setTimeout(function() {
@@ -622,7 +630,7 @@ export class BrowserManager {
         this.log('info', `  ステップ${page.stepNumber} submitSelector: "${lastClick.text}" (${lastClick.selector})`);
 
         if (windowClicks.length > 1) {
-          page.preClicks = windowClicks.slice(0, -1).map(e => ({ selector: e.selector, text: e.text }));
+          page.preClicks = windowClicks.slice(0, -1).map(e => ({ selector: e.selector, text: e.text, href: e.href || '' }));
           this.log('info', `  ステップ${page.stepNumber} preClicks: ${page.preClicks.length}件`);
           for (const pc of page.preClicks) {
             this.log('info', `    └ preClick: "${pc.text}" (${pc.selector})`);
@@ -645,10 +653,10 @@ export class BrowserManager {
           prevPage.submitText = last.text;
           if (clicksToReachThis.length > 1) {
             if (!prevPage.preClicks) prevPage.preClicks = [];
-            prevPage.preClicks.push(...clicksToReachThis.slice(0, -1).map(e => ({ selector: e.selector, text: e.text })));
+            prevPage.preClicks.push(...clicksToReachThis.slice(0, -1).map(e => ({ selector: e.selector, text: e.text, href: e.href || '' })));
           }
         } else {
-          page.preClicks = clicksToReachThis.map(e => ({ selector: e.selector, text: e.text }));
+          page.preClicks = clicksToReachThis.map(e => ({ selector: e.selector, text: e.text, href: e.href || '' }));
         }
       }
     }
@@ -782,16 +790,38 @@ export class BrowserManager {
         // ---- セットアップpreClicks ----
         // テストケースに含まれていないセッションページのpreClicksを
         // 最初のステップのURLに対して先に実行する（モーダル閉じなど状態設定）
-        const executePreClick = async (preClick: { selector: string; text: string }) => {
+        const executePreClick = async (preClick: { selector: string; text: string; href?: string }) => {
           try {
             this.log('info', `[${testCase.caseId}] 🖱️ preClick: ${preClick.selector} "${preClick.text}"`);
-            const clicked = await page.evaluate((sel: string) => {
-              const el = document.querySelector(sel);
-              if (el) { (el as HTMLElement).click(); return true; }
-              return false;
-            }, preClick.selector).catch(() => false);
+
+            // href が有効な場合は href ベースのセレクタを優先（同一クラスの要素が複数ある場合に正確）
+            const hrefSel = preClick.href && preClick.href !== '#' && preClick.href !== 'javascript:void(0)' && preClick.href !== 'javascript:;'
+              ? `a[href="${preClick.href}"]`
+              : null;
+
+            const trySelectors = hrefSel
+              ? [hrefSel, preClick.selector]
+              : [preClick.selector];
+
+            let clicked = false;
+            for (const sel of trySelectors) {
+              clicked = await page.evaluate((sel: string) => {
+                const el = document.querySelector(sel);
+                if (el) { (el as HTMLElement).click(); return true; }
+                return false;
+              }, sel).catch(() => false);
+              if (clicked) {
+                if (sel !== preClick.selector) this.log('info', `[${testCase.caseId}] 💡 href優先セレクタで成功: ${sel}`);
+                break;
+              }
+            }
             if (!clicked) {
-              await page.locator(preClick.selector).first().click({ force: true, timeout: 3000 }).catch(() => {});
+              // フォールバック: Playwright locator
+              const locSel = hrefSel || preClick.selector;
+              await page.locator(locSel).first().click({ force: true, timeout: 3000 }).catch(() => {
+                // 最終フォールバック
+                return page.locator(preClick.selector).first().click({ force: true, timeout: 3000 }).catch(() => {});
+              });
             }
             await page.waitForTimeout(1000);
             
@@ -965,7 +995,7 @@ export class BrowserManager {
             // デバッグ: ページ内のボタン候補を列挙
             // debugInfo省略（外部JS化で__name問題回避）
             
-            const autoDetectedScript = fs.readFileSync(path.join(__dirname, '../browser-scripts/auto-detect-submit.js'), 'utf8');
+            const autoDetectedScript = readFileSync(join(__dirname, '../browser-scripts/auto-detect-submit.js'), 'utf8');
             const autoDetected = await page.evaluate(autoDetectedScript);
 
             if (autoDetected) {
