@@ -4,3 +4,5 @@ data/
 config/settings.json
 public/*.zip
 *.zip
+public/capture_*.png
+public/capture_test_*.png

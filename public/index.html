@@ -1149,8 +1149,13 @@ async function loadMergeCases() {
             data-session="${escAttr(sName)}"
             data-case="${escAttr(tc.caseId)}"
             ${enabled ? 'checked' : ''} style="flex-shrink:0;">
-          <span style="font-size: 12px; font-weight: 600; color: var(--primary); flex-shrink:0;">${escHtml(tc.caseId)}</span>
-          <span style="font-size: 12px; color: var(--text2); flex:1;">${escHtml(tc.caseName || '')}</span>
+          <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:1px;">
+            <div style="display:flex; align-items:baseline; gap:6px;">
+              <span style="font-size: 12px; font-weight: 600; color: var(--primary); flex-shrink:0;">${escHtml(tc.caseId)}</span>
+              <span style="font-size: 12px; color: var(--text1); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(tc.caseName || '(名前なし)')}</span>
+            </div>
+            <span style="font-size: 10px; color: var(--text2);">${tc.pageInputs?.length ?? 0}ステップ</span>
+          </div>
           <button onclick="deleteReplayCase(${JSON.stringify(sName)}, ${JSON.stringify(tc.caseId)})"
             style="flex-shrink:0; padding:2px 6px; border-radius:4px; border:1px solid var(--border);
             background:transparent; cursor:pointer; font-size:11px; color:var(--danger);" title="削除">🗑️</button>
@@ -1202,8 +1207,13 @@ async function loadReplayCases() {
       const op = tc.enabled ? '' : 'opacity:0.5;';
       html += `<div style="display: flex; align-items: center; gap: 6px; padding: 4px 8px; ${op}">
         <input type="checkbox" class="case-checkbox" value="${escAttr(tc.caseId)}" ${tc.enabled ? 'checked' : ''} style="flex-shrink:0;">
-        <span style="font-size: 12px; font-weight:600; color:var(--primary); flex-shrink:0;">${escHtml(tc.caseId)}</span>
-        <span style="font-size: 12px; color:var(--text2); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(tc.caseName || '')}</span>
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:1px;">
+          <div style="display:flex; align-items:baseline; gap:6px;">
+            <span style="font-size: 12px; font-weight:600; color:var(--primary); flex-shrink:0;">${escHtml(tc.caseId)}</span>
+            <span style="font-size: 12px; color:var(--text1); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(tc.caseName || '(名前なし)')}</span>
+          </div>
+          <span style="font-size: 10px; color: var(--text2);">${tc.pageInputs?.length ?? 0}ステップ</span>
+        </div>
         <button onclick="deleteReplayCase(${JSON.stringify(sessionName)}, ${JSON.stringify(tc.caseId)})"
           style="flex-shrink:0; padding:2px 6px; border-radius:4px; border:1px solid var(--border);
           background:transparent; cursor:pointer; font-size:11px; color:var(--danger);" title="削除">🗑️</button>
