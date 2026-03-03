@@ -45,6 +45,35 @@ app.use(express.static(path.resolve(__dirname, '../../public')));
 app.use('/screenshots', express.static(path.resolve('data/screenshots')));
 
 // バージョンAPI
+app.get('/api/zenrosai-screenshots', (_req, res) => {
+  const dir = path.resolve('public/zenrosai');
+  if (!fs.existsSync(dir)) { res.json([]); return; }
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.png')).sort();
+  res.json(files);
+});
+
+// ツール生成specの実行
+app.post('/api/run-generated', (_req, res) => {
+  const specPath = path.resolve('tool_gen.spec.ts');
+  if (!fs.existsSync(specPath)) { res.status(404).json({ error: 'spec not found' }); return; }
+  res.json({ ok: true, message: 'starting' });
+  // 非同期実行
+  const { execFile } = require('child_process');
+  execFile('npx', ['playwright', 'test', specPath, '--reporter=line', '--timeout=300000'],
+    { env: { ...process.env, DISPLAY: ':99' } },
+    (err, stdout, stderr) => {
+      const log = stdout + stderr;
+      fs.writeFileSync(path.resolve('data/last-run.log'), log);
+    }
+  );
+});
+
+app.get('/api/run-log', (_req, res) => {
+  const logPath = path.resolve('data/last-run.log');
+  if (!fs.existsSync(logPath)) { res.json({ log: '' }); return; }
+  res.json({ log: fs.readFileSync(logPath, 'utf-8') });
+});
+
 app.get('/api/version', (_req, res) => {
   res.json({ version: VERSION, buildDate: VERSION.split('-')[1] || 'unknown' });
 });
@@ -472,4 +501,34 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log('║   ブラウザで上記URLを開いてください              ║');
   console.log('╚════════════════════════════════════════════════╝');
   console.log('');
+});
+
+// =========================================
+// カスタムシナリオ実行エンドポイント
+// =========================================
+import { execFile } from 'child_process';
+
+app.post('/api/scenarios/run', (req, res) => {
+  const { scenario } = req.body as { scenario: string };
+  const allowed = ['zenrosai-mycar'];
+  if (!allowed.includes(scenario)) {
+    return res.status(400).json({ error: 'Unknown scenario' });
+  }
+  const specFile = path.resolve(__dirname, `../../${scenario}.spec.ts`);
+  if (!fs.existsSync(specFile)) {
+    return res.status(404).json({ error: 'Spec file not found' });
+  }
+  const logFile = path.resolve('data/last-run.log');
+  fs.writeFileSync(logFile, '');
+  res.json({ ok: true, message: `${scenario} started` });
+  const proc = execFile('npx', ['playwright', 'test', specFile, '--reporter=line', '--timeout=300000'], {
+    cwd: path.resolve(__dirname, '../..'),
+    env: { ...process.env, DISPLAY: ':99' },
+  }, (err, stdout, stderr) => {
+    const log = stdout + (err ? '\n❌ ERROR:\n' + stderr : '\n✅ 完了');
+    fs.writeFileSync(logFile, log);
+  });
+  // リアルタイムでログ書き出し
+  proc.stdout?.on('data', (d: Buffer) => fs.appendFileSync(logFile, d.toString()));
+  proc.stderr?.on('data', (d: Buffer) => fs.appendFileSync(logFile, d.toString()));
 });

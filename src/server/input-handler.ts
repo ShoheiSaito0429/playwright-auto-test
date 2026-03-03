@@ -34,6 +34,33 @@ export class InputHandler {
       case 'file':
         await this.uploadFile(page, field.selector, field.filePath || field.value);
         break;
+      case 'click_js':
+        // JS直接クリック（モーダルトリガー・決定ボタン等）
+        await page.evaluate((sel: string) => {
+          const el = document.querySelector(sel) as HTMLElement | null;
+          if (el) el.click();
+        }, field.selector);
+        await page.waitForTimeout(Number(field.value) || 800);
+        break;
+      case 'wait':
+        await page.waitForTimeout(Number(field.value) || 500);
+        break;
+      case 'wait_for':
+        // codegen と同じ waitForFunction でオプション/要素が出るまで待つ
+        try {
+          await page.waitForFunction(
+            (sel: string) => {
+              const el = document.querySelector(sel) as HTMLSelectElement | null;
+              if (!el) return false;
+              if (el.tagName === 'SELECT') return el.options.length >= 2;
+              // radio/checkbox: 要素が存在すればOK
+              return document.querySelectorAll(sel).length > 0;
+            },
+            field.selector,
+            { timeout: 12000 }
+          ).catch(() => {});
+        } catch { /* タイムアウトしても続行 */ }
+        break;
     }
   }
 

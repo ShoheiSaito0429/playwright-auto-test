@@ -1050,6 +1050,13 @@ export class BrowserManager {
                 return main ? main.innerHTML.length : 0;
               }).catch(() => 0);
 
+              // カスタムアラートを閉じる（zenrosai対応）
+              await page.evaluate(() => {
+                const closeBtn = document.querySelector('#popup_alert .js-popup-close') as HTMLElement;
+                if (closeBtn) closeBtn.click();
+              }).catch(() => {});
+              await page.waitForTimeout(200);
+              
               // 少し待ってからクリック（JSアニメーション等の完了待ち）
               await page.waitForTimeout(300);
               this.log('info', `[${testCase.caseId}] 🖱️ 送信クリック: ${submitSelector}`);
@@ -1067,16 +1074,19 @@ export class BrowserManager {
               });
               
               if (hrefJs) {
-                // javascript: リンクの場合、JSコードを直接実行
-                this.log('info', `[${testCase.caseId}] 🔗 javascript: リンクを検出 → JS直接実行`);
+                // javascript: リンクでも btn.click() で直接クリック（codegen と同じ方式）
+                this.log('info', `[${testCase.caseId}] 🔗 javascript: リンクを検出 → force click`);
                 try {
-                  await page.evaluate((code: string) => {
-                    // グローバルスコープで実行
-                    eval(code);
-                  }, hrefJs);
+                  await btn.click({ force: true, timeout: 5000 });
                   clickSuccess = true;
                 } catch (e: any) {
-                  this.log('warn', `[${testCase.caseId}] JS直接実行失敗: ${e.message}, 通常クリックを試行`);
+                  this.log('warn', `[${testCase.caseId}] force click失敗: ${e.message}, JS評価を試行`);
+                  try {
+                    await page.evaluate((code: string) => { eval(code); }, hrefJs);
+                    clickSuccess = true;
+                  } catch (e2: any) {
+                    this.log('warn', `[${testCase.caseId}] JS評価失敗: ${e2.message}`);
+                  }
                 }
               }
               
@@ -1110,13 +1120,18 @@ export class BrowserManager {
               }
 
               if (clickSuccess) {
-                // 遷移を待機
+                // 遷移を待機 (URLが変わるまで最大15秒ポーリング)
+                const pollStart = Date.now();
+                let urlAfter = page.url();
+                while (urlAfter === urlBefore && Date.now() - pollStart < 15000) {
+                  await page.waitForTimeout(500);
+                  urlAfter = page.url();
+                }
                 await page.waitForLoadState('domcontentloaded', { timeout: this.settings.timeout.navigation }).catch(() => {});
                 await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-                await page.waitForTimeout(500);
                 
                 // 遷移を検証
-                const urlAfter = page.url();
+                urlAfter = page.url();
                 const contentHashAfter = await page.evaluate(() => {
                   const main = document.querySelector('main, #main, .main, [role="main"], form, body');
                   return main ? main.innerHTML.length : 0;

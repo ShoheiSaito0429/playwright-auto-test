@@ -231,6 +231,24 @@ test('zenrosai マイカー共済 新規申込 通し確認', async ({ page }) =
   console.log('shinki02完了 → 次:', page.url().split('?')[0].split('/').pop());
   await snap('shinki03_表示');
 
+
+  // =========================================
+  // Step 6: shinki03 — お車について
+  //   車両損害補償: はい
+  // =========================================
+  await page.evaluate(() => {
+    const r = (n: string, v: string) => {
+      const el = document.querySelector(`input[name="${n}"][value="${v}"]`) as HTMLInputElement;
+      if (el) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }
+    };
+    r('sharyohosho_futaikibo', '1'); // 車両損害補償: はい（付帯希望）
+  });
+  await page.waitForTimeout(500);
+  await snap('shinki03_入力済み');
+  await clickFormNext();
+  await page.waitForTimeout(2000);
+  await snap('shinki04_見積もり結果');
+
   // =========================================
   // 結果サマリ
   // =========================================

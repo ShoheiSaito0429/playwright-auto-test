@@ -295,7 +295,24 @@
           <button class="btn btn-success" id="btnStartReplay" onclick="startReplay()">▶️ 再生開始</button>
         </div>
       </div>
-      
+
+      <!-- zenrosai シナリオ実行 -->
+      <div class="card">
+        <h2>🎯 シナリオ実行</h2>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">録画済みシナリオをワンクリックで実行します。</p>
+        <div class="btn-group" style="margin-bottom:12px;">
+          <button class="btn btn-primary" id="btnRunZenrosai" onclick="runScenario('zenrosai-mycar')">▶ zenrosai-mycar 実行</button>
+          <button class="btn" onclick="showGallery()" style="margin-left:8px;">🖼 スクリーンショット表示</button>
+        </div>
+        <div id="scenarioLog" style="display:none;background:#0d1117;color:#58a6ff;padding:12px;border-radius:6px;font-family:monospace;font-size:12px;max-height:200px;overflow-y:auto;white-space:pre-wrap;"></div>
+      </div>
+
+      <!-- スクリーンショットギャラリー -->
+      <div class="card" id="galleryCard" style="display:none;">
+        <h2>🖼 スクリーンショット</h2>
+        <div id="galleryGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;"></div>
+      </div>
+
       <!-- 実行進捗 -->
       <div class="card" id="replayProgress" style="display:none;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
