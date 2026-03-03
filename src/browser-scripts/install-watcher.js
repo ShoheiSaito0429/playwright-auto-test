@@ -136,5 +136,78 @@
     details.addEventListener('toggle', notify);
   });
 
+
+  // ========================================
+  // インタラクション記録（v2）
+  // ========================================
+  let _lastInteractionTs = Date.now();
+
+  const _genId = () => Math.random().toString(36).slice(2, 10);
+
+  const _getLabel = (el) => {
+    if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+    if (el.id) {
+      const lbl = document.querySelector(`label[for="${el.id}"]`);
+      if (lbl) return lbl.textContent.trim();
+    }
+    const closest = el.closest('label, td, th, li');
+    if (closest) return closest.textContent.trim().substring(0, 50);
+    return el.textContent?.trim().substring(0, 50) || '';
+  };
+
+  const _sendInteraction = (payload) => {
+    console.log('__INTERACTION__' + JSON.stringify(payload));
+  };
+
+  // フォーム変更イベント（radio / checkbox / select / text 入力）
+  document.addEventListener('change', (e) => {
+    const el = e.target;
+    if (!el || !['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return;
+    // ラジオは checked になったものだけ記録
+    if (el.type === 'radio' && !el.checked) return;
+
+    const now = Date.now();
+    const msSincePrev = now - _lastInteractionTs;
+    _lastInteractionTs = now;
+
+    _sendInteraction({
+      id: _genId(),
+      pageUrl: window.location.href,
+      action: 'change',
+      selector: buildSelector(el),
+      elementType: el.type || el.tagName.toLowerCase(),
+      value: el.type === 'checkbox' ? (el.checked ? 'true' : 'false') : el.value,
+      label: _getLabel(el),
+      timestamp: now,
+      msSincePrev,
+    });
+  }, true);
+
+  // クリックイベント（リンク・ボタン）
+  document.addEventListener('click', (e) => {
+    let el = e.target;
+    for (let i = 0; i < 5 && el; i++) {
+      if (isClickableElement(el)) {
+        const now = Date.now();
+        const msSincePrev = now - _lastInteractionTs;
+        _lastInteractionTs = now;
+
+        _sendInteraction({
+          id: _genId(),
+          pageUrl: window.location.href,
+          action: 'click',
+          selector: buildSelector(el),
+          elementType: el.tagName.toLowerCase(),
+          value: el.getAttribute('href') || '',
+          label: (el.textContent || '').trim().substring(0, 50),
+          timestamp: now,
+          msSincePrev,
+        });
+        break;
+      }
+      el = el.parentElement;
+    }
+  }, true);
+
   console.log('[FieldWatcher] 監視を開始しました（全クリックキャプチャモード）');
 })()

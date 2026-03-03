@@ -65,6 +65,8 @@ export interface RecordingSession {
   startUrl: string;
   /** 全ページ（ログイン画面含む） */
   pages: RecordedPage[];
+  /** ユーザーの実操作ログ（v2 インタラクション記録） */
+  interactions?: Interaction[];
   startedAt: string;
   completedAt: string;
 }
@@ -139,4 +141,22 @@ export interface ReplayResult {
   error?: string;
   screenshots: string[];
   duration: number;
+}
+
+// ========================================
+// インタラクション記録（v2）
+// ========================================
+
+export type InteractionAction = 'change' | 'click' | 'input';
+
+export interface Interaction {
+  id: string;
+  pageUrl: string;
+  action: InteractionAction;
+  selector: string;
+  elementType: string;   // 'radio' | 'select' | 'text' | 'a' | 'button' etc.
+  value: string;         // 入力値 / radio value / select value / click href
+  label: string;
+  timestamp: number;
+  msSincePrev: number;   // 前のインタラクションからの経過ms（wait 生成に使用）
 }

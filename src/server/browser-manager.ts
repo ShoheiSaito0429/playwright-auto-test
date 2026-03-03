@@ -193,6 +193,17 @@ export class BrowserManager {
           this.log('info', `🖱️ クリック記録: ${data.selector} "${data.text}"`);
         } catch {}
       }
+      // インタラクション記録（v2）
+      if (text.startsWith('__INTERACTION__')) {
+        try {
+          const data = JSON.parse(text.slice('__INTERACTION__'.length));
+          if (this.session) {
+            if (!this.session.interactions) this.session.interactions = [];
+            this.session.interactions.push(data);
+            this.log('info', `⚡ 操作記録: [${data.elementType}] ${data.selector} = "${data.value}"`);
+          }
+        } catch {}
+      }
     });
 
     // ページ遷移・読み込み完了時にフィールドを自動収集

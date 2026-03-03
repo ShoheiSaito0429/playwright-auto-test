@@ -755,7 +755,19 @@ async function loadSession() {
 }
 
 function autoGenerateTestCase(session) {
-  // 可視フィールドがあるページだけを含める
+  // ── v2: インタラクション記録がある場合はそちらから生成 ──
+  const interactions = session.interactions || [];
+  if (interactions.length > 0) {
+    const tc = generateFromInteractions(session, interactions);
+    if (tc) {
+      testCases = [tc];
+      addLog('info', `✅ インタラクション記録から ${tc.pageInputs.length}ステップのテストケースを生成（${interactions.length}操作）`);
+      renderCaseTable();
+      return;
+    }
+  }
+
+  // ── v1 フォールバック: pages ベースの生成（既存ロジック） ──
   const validPages = session.pages.filter(p => {
     const visibleFields = (p.fields || []).filter(f => f.state === 'active' || f.isVisible);
     return visibleFields.length > 0 || (p.preClicks && p.preClicks.length > 0);
@@ -776,19 +788,120 @@ function autoGenerateTestCase(session) {
       stepNumber: p.stepNumber,
       pageId: p.id,
       submitSelector: p.submitSelector || '',
-      fieldValues: p.fields.map(f => ({
-        fieldId: f.id,
-        selector: f.selector,
-        type: f.type,
-        label: f.label || f.name || '',
-        value: f.value || '',
-        filePath: f.filePath || '',
-      })),
+      fieldValues: p.fields
+        .filter(f => f.state === 'active' || f.isVisible)
+        .map(f => {
+          let val = f.value || '';
+          if ((f.type === 'radio' || f.type === 'checkbox') && !val && f.options) {
+            const checked = f.options.find(o => o.checked || (f.checked && f.radioValue === o.value));
+            if (checked) val = checked.value;
+          }
+          return {
+            fieldId: f.id,
+            selector: f.selector,
+            type: f.type,
+            label: f.label || f.name || '',
+            value: val,
+            filePath: f.filePath || '',
+          };
+        }),
     })),
   };
   testCases = [tc];
   addLog('info', `📝 ${validPages.length}ステップのテストケースを生成`);
-  renderCaseTable();
+
+// インタラクション記録からテストケースを生成
+function generateFromInteractions(session, interactions) {
+  // クリックのうち「送信ボタン」と判定するヒューリスティック
+  const isSubmitClick = (i) => {
+    if (i.action !== 'click') return false;
+    const sel = i.selector || '';
+    const label = i.label || '';
+    const val = i.value || '';
+    // 次へ・送信・確認系ボタン
+    if (/次へ|送信|確認|submit|next|continue/i.test(label)) return true;
+    // javascript: href（フォーム送信JS）
+    if (val.startsWith('javascript:') && !/modal|popup|open|toggle/i.test(val)) return true;
+    // 既知の送信セレクタパターン
+    if (/m-joken_next_btn|c-font-strong.*c-next|c-next|btn-submit/i.test(sel)) return true;
+    return false;
+  };
+
+  // インタラクションをステップに分割（送信クリックで区切る）
+  const steps = [];
+  let currentStep = { fieldValues: [], submitSelector: '' };
+  let stepNumber = 1;
+
+  for (let i = 0; i < interactions.length; i++) {
+    const interaction = interactions[i];
+
+    if (isSubmitClick(interaction)) {
+      // 送信クリックはステップの区切り
+      currentStep.submitSelector = interaction.selector;
+      if (currentStep.fieldValues.length > 0 || currentStep.submitSelector) {
+        steps.push({ stepNumber: stepNumber++, ...currentStep });
+      }
+      currentStep = { fieldValues: [], submitSelector: '' };
+    } else if (interaction.action === 'change') {
+      // フォーム入力
+      const elementType = interaction.elementType || 'text';
+      let fieldType = 'text';
+      if (elementType === 'radio') fieldType = 'radio';
+      else if (elementType === 'checkbox') fieldType = 'checkbox';
+      else if (elementType === 'select' || elementType === 'select-one') fieldType = 'select';
+      else if (elementType === 'textarea') fieldType = 'textarea';
+
+      // 前のインタラクションからの経過時間が長い場合は wait_for を追加
+      if (interaction.msSincePrev > 1500 && currentStep.fieldValues.length > 0) {
+        // AJAX 待機が必要そうな場合（select の後など）
+        const prev = currentStep.fieldValues[currentStep.fieldValues.length - 1];
+        if (prev && prev.type === 'select') {
+          currentStep.fieldValues.push({
+            fieldId: `wait_for_${interaction.id}`,
+            selector: interaction.selector,
+            type: 'wait_for',
+            label: `${prev.label} 読み込み待ち`,
+            value: '',
+            filePath: '',
+          });
+        }
+      }
+
+      currentStep.fieldValues.push({
+        fieldId: interaction.id,
+        selector: interaction.selector,
+        type: fieldType,
+        label: interaction.label || '',
+        value: interaction.value || '',
+        filePath: '',
+      });
+    } else if (interaction.action === 'click') {
+      // 送信以外のクリック（モーダル開閉など）
+      const waitMs = Math.min(Math.max(interaction.msSincePrev || 800, 500), 3000);
+      currentStep.fieldValues.push({
+        fieldId: `click_${interaction.id}`,
+        selector: interaction.selector,
+        type: 'click_js',
+        label: interaction.label || 'クリック',
+        value: String(waitMs),
+        filePath: '',
+      });
+    }
+  }
+
+  // 最後のステップを追加（送信なし）
+  if (currentStep.fieldValues.length > 0) {
+    steps.push({ stepNumber: stepNumber, ...currentStep });
+  }
+
+  if (steps.length === 0) return null;
+
+  return {
+    caseId: 'CASE_001',
+    caseName: '録画から自動生成',
+    enabled: true,
+    pageInputs: steps,
+  };
 }
 
 function addTestCase() {
