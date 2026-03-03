@@ -819,12 +819,18 @@ function generateFromInteractions(session, interactions) {
     const sel = i.selector || '';
     const label = i.label || '';
     const val = i.value || '';
-    // 次へ・送信・確認系ボタン
+    // 戻る・キャンセル系は除外
+    if (/戻る|キャンセル|cancel|back/i.test(label)) return false;
+    // void(0) は曖昧なので label が明確な送信ワードの時だけ
+    if (val === 'javascript:void(0);' || val === 'javascript:void(0)') {
+      return /次へ|送信|確認|submit|next|continue/i.test(label);
+    }
+    // 次へ・送信・確認系ラベル
     if (/次へ|送信|確認|submit|next|continue/i.test(label)) return true;
-    // javascript: href（フォーム送信JS）
-    if (val.startsWith('javascript:') && !/modal|popup|open|toggle/i.test(val)) return true;
+    // javascript: href — 明らかなフォーム送信関数パターンのみ
+    if (val.startsWith('javascript:') && /submit|Submit|NEXT|cmnSubmit|goNext|chgKs/i.test(val)) return true;
     // 既知の送信セレクタパターン
-    if (/m-joken_next_btn|c-font-strong.*c-next|c-next|btn-submit/i.test(sel)) return true;
+    if (/m-joken_next_btn|c-next|btn-submit/i.test(sel)) return true;
     return false;
   };
 
