@@ -1031,6 +1031,8 @@ export class BrowserManager {
 
           if (isSamePageNext) {
             this.log('info', `[${testCase.caseId}] ⏭ 次のステップも同じページ → 送信スキップして続けて入力`);
+          } else if (submitSelector === 'skip' || submitSelector === '__skip__') {
+            this.log('info', `[${testCase.caseId}] ⏭ submitSelector=skip → 送信スキップ（fieldValues内で遷移済み想定）`);
           } else if (submitSelector) {
             try {
               const btn = page.locator(submitSelector).first();

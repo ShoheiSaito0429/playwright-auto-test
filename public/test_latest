@@ -1,0 +1,22 @@
+[
+  {
+    "caseId": "CASE_001",
+    "caseName": "四輪・GRヤリス・車両損害補償あり",
+    "status": "success",
+    "screenshots": [
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_001.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_002.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_003.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_004.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_005.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_006.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_007.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_008.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_009.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_010.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_011.png",
+      "/app/data/screenshots/CASE_001_20260303041806/CASE_001_012.png"
+    ],
+    "duration": 339902
+  }
+]
